@@ -13,9 +13,9 @@ jobs:
         with:
           python-version: "3.13"
       - run: |
-          pip download --only-binary=:all: --dest wheels black==24.10.0 ruff==0.9.10
+          pip download --only-binary=:all: --dest wheels black==26.5.1 ruff==0.16.6
       - uses: actions/upload-artifact@v4
         with:
           name: offline-devtools
           path: wheels/*.whl
-          retention-days: 2
+          retention-days: 7
