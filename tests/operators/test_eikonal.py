@@ -14,9 +14,7 @@ def test_homogeneous_offgrid_water_and_exterior_geometry():
     )
     model = EikonalForward(grid, geometry)
     expected = (
-        np.linalg.norm(
-            geometry.tx_pos_m[:, None] - geometry.rx_pos_m[None, :], axis=-1
-        )
+        np.linalg.norm(geometry.tx_pos_m[:, None] - geometry.rx_pos_m[None, :], axis=-1)
         / 1500
     )
     np.testing.assert_allclose(
