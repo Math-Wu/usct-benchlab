@@ -1,0 +1,83 @@
+name: complete-waveform-stage
+
+on:
+  push:
+    branches: ["work/physics-agent-validation"]
+    paths: [".github/workflows/complete-waveform-stage.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: usct-verified-integration-work-physics-agent-validation
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    if: github.ref == 'refs/heads/work/physics-agent-validation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install -e ".[dev,viz]" black==26.5.1 ruff==0.16.6
+      - name: Apply each integration stage, validate it completely, then fast-forward publish
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          import runpy
+
+          root = Path.cwd()
+          # Preserve the project's supported Python 3.10 runtime.
+          compat = root / "src/usctbench/core/compat.py"
+          if not compat.exists():
+              compat.write_text('"""String-enum compatibility for supported Python versions."""\nfrom enum import Enum\n\nclass StrEnum(str, Enum):\n    def __str__(self) -> str:\n        return self.value\n')
+          for filename in ("schema.py", "provenance.py"):
+              path = root / "src/usctbench/core" / filename
+              path.write_text(path.read_text().replace("from enum import StrEnum", "from usctbench.core.compat import StrEnum"))
+          project = root / "pyproject.toml"
+          text = project.read_text()
+          if "[tool.ruff.lint]" not in text:
+              text += '\n[tool.ruff.lint]\nselect = ["E4", "E7", "E9", "F"]\n'
+          project.write_text(text)
+
+          scope = runpy.run_path(".github/scripts/complete_waveform_stage.py")
+          original = scope["waveform_stage"]
+          def pressure_stage():
+              original()
+              # Persisted calibration and explicit config calibration have the same
+              # entrypoint. Config calibration takes precedence over the case field.
+              path = root / "src/usctbench/algorithms/rwave.py"
+              tree = ast.parse(path.read_text())
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "RayBornOperator":
+                      node.keywords = [item for item in node.keywords if item.arg != "source_spectrum"]
+                      node.keywords.append(ast.keyword(arg="source_spectrum", value=ast.parse('config.parameters.get("source_spectrum", case.measurement.source_spectrum)', mode="eval").body))
+              ast.fix_missing_locations(tree)
+              path.write_text(ast.unparse(tree) + "\n")
+          scope["main"].__globals__["waveform_stage"] = pressure_stage
+          scope["main"]()
+          PY
+      - name: Preserve the exact uncommitted patch when a stage fails
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/usct-stage-validation"
+          git diff HEAD -- src tests docs pyproject.toml > "$RUNNER_TEMP/usct-stage-validation/unpublished-stage.patch"
+          git status --short > "$RUNNER_TEMP/usct-stage-validation/worktree-status.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verified-integration-logs
+          path: ${{ runner.temp }}/usct-stage-validation/
+          retention-days: 14
