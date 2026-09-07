@@ -1,283 +1,201 @@
-"""Bent-ray travel-time adapter baseline."""
+"""Nonlinear first-arrival Eikonal inversion; no straight-ray fallback."""
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
+from usctbench.algorithms._control import InversionControl, add_image_metrics
 from usctbench.algorithms.ray import (
-    StraightRayProjector,
     _gaussian_smooth,
-    apply_mask,
-    cgls_solve,
     configured_ray_weights,
-    huber_irls_cgls_solve,
-    image_diagnostic_metrics,
-    masked_norm,
-    ray_weight_metrics,
     reference_sound_speed,
-    residual_metrics,
     run_with_failure_capture,
-    slowness_to_sound_speed,
     speed_bounds,
-    target_delta_tof,
 )
 from usctbench.core.config import coerce_bool
 from usctbench.core.registry import register_algorithm
 from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, USCTCase
-from usctbench.metrics import (
-    compute_baseline_improvement_metrics,
-    compute_image_metrics,
-)
-
-
-def run_iterative_travel_time_solver(
-    *,
-    algorithm: str,
-    case: USCTCase,
-    config: AlgorithmConfig,
-    method_family: str,
-    default_outer_iterations: int,
-    default_inner_iterations: int,
-    default_regularization: str,
-    default_regularization_lambda: float,
-    default_smooth_sigma: float,
-    extra_metrics: dict[str, Any] | None = None,
-) -> ReconstructionResult:
-    """Run a small regularized travel-time inversion using project-native I/O.
-
-    This is the release smoke/quality path for algorithms whose full reference
-    implementation lives in external MATLAB repositories. It keeps the same
-    travel-time data contract and records method-family metadata so results are
-    auditable without vendoring third-party code.
-    """
-
-    base_projector = StraightRayProjector.from_case(case)
-    projector = base_projector
-    target, mask = target_delta_tof(case, projector)
-    weights = configured_ray_weights(case, projector, mask, config)
-    c0 = reference_sound_speed(case, config)
-    bounds = speed_bounds(config)
-    outer_iterations = int(
-        config.parameters.get("outer_iterations", default_outer_iterations)
-    )
-    inner_iterations = int(
-        config.parameters.get("inner_iterations", default_inner_iterations)
-    )
-    step_length = float(config.parameters.get("step_length", 1.0))
-    regularization = str(
-        config.parameters.get("regularization", default_regularization)
-    )
-    lambda_value = float(
-        config.parameters.get("regularization_lambda", default_regularization_lambda)
-    )
-    damping = float(config.parameters.get("damping", lambda_value**2))
-    smooth_sigma = float(config.parameters.get("smooth_sigma", default_smooth_sigma))
-    roi_update_only = coerce_bool(config.parameters.get("roi_update_only", False))
-    line_search = coerce_bool(config.parameters.get("line_search", False))
-    roi_laplacian = coerce_bool(config.parameters.get("roi_laplacian", False))
-    robust_loss = str(config.parameters.get("robust_loss", "none")).lower()
-    delta_slowness = np.zeros(case.grid.shape, dtype=float)
-    initial_norm = masked_norm(target, mask, weights)
-    residual_curve = [initial_norm]
-    update_norms: list[float] = []
-    roi_mask = (
-        np.asarray(case.grid.roi_mask, dtype=bool)
-        if case.grid.roi_mask is not None and (roi_update_only or roi_laplacian)
-        else None
-    )
-
-    for _ in range(max(1, outer_iterations)):
-        residual = target - projector.forward(delta_slowness)
-        if robust_loss in {"huber", "irls", "huber_irls"}:
-            update, _inner_curve = huber_irls_cgls_solve(
-                projector,
-                residual,
-                mask,
-                iterations=inner_iterations,
-                damping=damping,
-                regularization=regularization,
-                weights=weights,
-                roi_mask=roi_mask,
-                huber_delta=float(config.parameters.get("huber_delta_s", 5.0e-7)),
-                irls_iterations=int(config.parameters.get("irls_iterations", 2)),
-            )
-        else:
-            update, _inner_curve = cgls_solve(
-                projector,
-                residual,
-                mask,
-                iterations=inner_iterations,
-                damping=damping,
-                regularization=regularization,
-                weights=weights,
-                roi_mask=roi_mask,
-            )
-        candidate, candidate_norm, accepted_step = _line_search_update(
-            projector,
-            target,
-            mask,
-            weights,
-            delta_slowness,
-            update,
-            step_length=step_length,
-            smooth_sigma=smooth_sigma,
-            roi_mask=(
-                np.asarray(case.grid.roi_mask, dtype=bool)
-                if roi_update_only and case.grid.roi_mask is not None
-                else None
-            ),
-            enabled=line_search,
-        )
-        delta_slowness = candidate
-        update_norms.append(float(np.linalg.norm(update)))
-        residual_curve.append(candidate_norm)
-        if line_search and accepted_step < step_length:
-            update_norms[-1] = float(np.linalg.norm(accepted_step * update))
-
-    sound_speed = slowness_to_sound_speed(delta_slowness, c0, bounds)
-    final_norm = residual_curve[-1] if residual_curve else initial_norm
-    metrics: dict[str, Any] = {
-        **residual_metrics(initial_norm, final_norm),
-        "iterations": outer_iterations,
-        "outer_iterations": outer_iterations,
-        "inner_iterations": inner_iterations,
-        "step_length": step_length,
-        "regularization": regularization,
-        "regularization_lambda": lambda_value,
-        "regularization_lambda_squared": damping,
-        "smooth_sigma": smooth_sigma,
-        "roi_update_only": roi_update_only,
-        "roi_laplacian": roi_laplacian,
-        "line_search": line_search,
-        "true_bent_ray": False,
-        "uses_true_bent_rays": False,
-        "robust_loss": robust_loss,
-        "method_family": method_family,
-        "residual_curve": residual_curve,
-        "update_norm_curve": update_norms,
-        **ray_weight_metrics(weights, mask, config),
-    }
-    if extra_metrics:
-        metrics.update(extra_metrics)
-    if case.ground_truth.sound_speed_mps is not None:
-        truth = np.asarray(case.ground_truth.sound_speed_mps, dtype=float)
-        metrics.update(
-            compute_image_metrics(sound_speed, truth, mask=case.grid.roi_mask)
-        )
-        metrics.update(
-            compute_baseline_improvement_metrics(
-                sound_speed, truth, c0, mask=case.grid.roi_mask
-            )
-        )
-        coverage = projector.adjoint(
-            np.asarray(mask, dtype=float) * np.clip(weights, 0.0, 1.0)
-        )
-        metrics.update(
-            image_diagnostic_metrics(
-                sound_speed,
-                truth,
-                roi_mask=case.grid.roi_mask,
-                coverage=coverage,
-                boundary_band_pixels=int(
-                    config.parameters.get("boundary_band_pixels", 4)
-                ),
-            )
-        )
-
-    return ReconstructionResult(
-        algorithm=algorithm,
-        case_id=case.case_id,
-        sound_speed_mps=sound_speed,
-        metrics=metrics,
-    )
-
-
-def _line_search_update(
-    projector: Any,
-    target: np.ndarray,
-    mask: np.ndarray,
-    weights: np.ndarray,
-    current: np.ndarray,
-    update: np.ndarray,
-    *,
-    step_length: float,
-    smooth_sigma: float,
-    roi_mask: np.ndarray | None,
-    enabled: bool,
-) -> tuple[np.ndarray, float, float]:
-    current_norm = float(
-        np.linalg.norm(
-            apply_mask(target - projector.forward(current), mask, weights)[mask]
-        )
-    )
-    steps = [float(step_length)]
-    if enabled:
-        steps.extend(float(step_length) * (0.5**idx) for idx in range(1, 8))
-    best = current
-    best_norm = current_norm
-    best_step = 0.0
-    for step in steps:
-        candidate = current + step * update
-        if smooth_sigma > 0.0:
-            candidate = _gaussian_smooth(candidate, smooth_sigma)
-        if roi_mask is not None:
-            candidate = np.where(roi_mask, candidate, 0.0)
-        norm = float(
-            np.linalg.norm(
-                apply_mask(target - projector.forward(candidate), mask, weights)[mask]
-            )
-        )
-        if (not enabled) or norm <= best_norm:
-            return candidate, norm, step
-        if norm < best_norm:
-            best = candidate
-            best_norm = norm
-            best_step = step
-    return best, best_norm, best_step
+from usctbench.core.stopping import BudgetExhausted
+from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.solvers.least_squares import normal_step, regularizer
 
 
 class BentRayGNAdapter:
-    """Regularized bent-ray-style travel-time baseline."""
+    """Bounded, regularized Gauss-Newton inversion of absolute or differential TOF."""
 
     name = "bent_ray_gn"
 
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
-        def _run() -> ReconstructionResult:
-            return run_iterative_travel_time_solver(
-                algorithm=self.name,
-                case=case,
-                config=config,
-                method_family="bent_ray_travel_time_baseline",
-                default_outer_iterations=4,
-                default_inner_iterations=16,
-                default_regularization="laplacian",
-                default_regularization_lambda=3.0e-5,
-                default_smooth_sigma=0.6,
-                extra_metrics={
-                    "surrogate_travel_time_backend": True,
-                    "full_external_eikonal_solver": False,
-                    "backend": "regularized_travel_time_baseline",
-                    "external_reference": "refraction-corrected USCT literature",
-                },
+        return run_with_failure_capture(
+            self.name, case, lambda: self._run(case, config)
+        )
+
+    def _run(self, case, config):
+        p = config.parameters
+        c0 = reference_sound_speed(case, config)
+        bounds = speed_bounds(config)
+        forward = EikonalForward(case.grid, case.geometry, background_speed_mps=c0)
+        distance = np.linalg.norm(
+            case.geometry.tx_pos_m[:, None] - case.geometry.rx_pos_m[None, :], axis=-1
+        )
+        differential = case.measurement.delta_tof_s is not None
+        observed = (
+            case.measurement.delta_tof_s if differential else case.measurement.tof_s
+        )
+        if observed is None:
+            raise ValueError("bent_ray_gn requires measured delta_tof_s or tof_s")
+        observed = np.asarray(observed, dtype=float)
+        valid = distance > 0
+        if case.measurement.valid_mask is not None:
+            valid &= case.measurement.valid_mask
+        weights = configured_ray_weights(case, forward, valid.ravel(), config).reshape(
+            observed.shape
+        )
+        control = InversionControl(
+            case,
+            config,
+            observed,
+            default_iterations=int(p.get("outer_iterations", 4)),
+            weights=weights,
+            valid_mask=valid,
+            iteration_unit="Gauss-Newton outer step",
+        )
+        inner = int(p.get("inner_iterations", 16))
+        if inner < 1:
+            raise ValueError("inner_iterations must be positive")
+        kind = str(p.get("regularization", "laplacian"))
+        damping = float(
+            p.get("damping", float(p.get("regularization_lambda", 3e-5)) ** 2)
+        )
+        step = float(p.get("step_length", 1.0))
+        sigma = float(p.get("smooth_sigma", 0.0))
+        if (
+            not np.isfinite([damping, step, sigma]).all()
+            or damping < 0
+            or step <= 0
+            or sigma < 0
+        ):
+            raise ValueError(
+                "damping/smoothing must be nonnegative; step_length positive"
+            )
+        if str(p.get("robust_loss", "none")).lower() != "none":
+            raise ValueError(
+                "native Eikonal GN currently supports robust_loss=none; no surrogate fallback"
+            )
+        line_search = coerce_bool(p.get("line_search", True))
+        roi_only = coerce_bool(p.get("roi_update_only", False))
+        roi = case.grid.roi_mask if roi_only else None
+        s0 = np.full(case.grid.shape, 1 / c0)
+        initial_speed = np.broadcast_to(
+            np.asarray(p.get("initial_sound_speed_mps", c0), dtype=float),
+            case.grid.shape,
+        )
+        if not np.isfinite(initial_speed).all() or np.any(initial_speed <= 0):
+            raise ValueError("initial_sound_speed_mps must be finite and positive")
+        s = np.clip(1 / initial_speed, 1 / bounds[1], 1 / bounds[0])
+        if roi is not None:
+            s = np.where(roi, s, s0)
+        initial = s.copy()
+        offset = distance / c0 if differential else np.zeros_like(distance)
+
+        def objective(state, prediction):
+            residual = np.where(
+                control.split.train, control.safe_observed - prediction, 0
+            )
+            reg = regularizer(state - s0, kind)
+            return float(
+                0.5 * np.sum(control.precision * residual**2)
+                + 0.5 * damping * np.vdot(reg, reg).real
             )
 
-        return run_with_failure_capture(self.name, case, _run)
+        try:
+            lin = control.call("forward", forward.linearize, s)
+            prediction = lin.value.reshape(observed.shape) - offset
+            cost = objective(s, prediction)
+            control.observe(0, s, prediction, objective=cost, sound_speed=1 / s)
+            for iteration in range(1, control.policy.max_iterations + 1):
+                if control.monitor.reason:
+                    break
+                update = normal_step(
+                    lin.jacobian,
+                    control.weighted_residual(prediction),
+                    s - s0,
+                    control,
+                    iterations=inner,
+                    damping=damping,
+                    regularization=kind,
+                    roi=roi,
+                )
+                accepted = False
+                for trial in range(10 if line_search else 1):
+                    candidate = s + step * 0.5**trial * update
+                    if sigma > 0:
+                        candidate = s0 + _gaussian_smooth(candidate - s0, sigma)
+                    candidate = np.clip(candidate, 1 / bounds[1], 1 / bounds[0])
+                    if roi is not None:
+                        candidate = np.where(roi, candidate, s0)
+                    new_lin = control.call("line_search", forward.linearize, candidate)
+                    new_prediction = new_lin.value.reshape(observed.shape) - offset
+                    new_cost = objective(candidate, new_prediction)
+                    if not line_search or new_cost <= cost:
+                        accepted = True
+                        break
+                if not accepted:
+                    control.monitor.finish("line_search_failed")
+                    break
+                relative = float(np.linalg.norm(candidate - s) / np.linalg.norm(s))
+                s, lin, prediction, cost = candidate, new_lin, new_prediction, new_cost
+                control.observe(
+                    iteration,
+                    s,
+                    prediction,
+                    objective=cost,
+                    update_relative=relative,
+                    sound_speed=1 / s,
+                )
+            if not control.monitor.reason:
+                control.monitor.finish("max_iterations")
+        except BudgetExhausted as exc:
+            control.monitor.finish(exc.reason)
+        except FloatingPointError:
+            control.monitor.finish("numerical_failure")
+        s, metrics = control.output(initial)
+        sound_speed = 1 / s
+        metrics.update(
+            {
+                "backend": "native_eikonal_fast_marching",
+                "true_bent_ray": True,
+                "uses_true_bent_rays": True,
+                "surrogate_travel_time_backend": False,
+                "full_external_eikonal_solver": False,
+                "method_family": "first_arrival_eikonal",
+                "linearization_parameter": "slowness_s_per_m",
+                "inner_iterations": inner,
+                "regularization": kind,
+                "regularization_lambda_squared": damping,
+                "line_search": line_search,
+                "roi_update_only": roi_only,
+                "roi_laplacian": coerce_bool(p.get("roi_laplacian", False)),
+                "ground_truth_used_for_initialization": False,
+            }
+        )
+        add_image_metrics(metrics, sound_speed, case, c0)
+        return ReconstructionResult(
+            algorithm=self.name,
+            case_id=case.case_id,
+            sound_speed_mps=sound_speed,
+            metrics=metrics,
+        )
 
 
 def register_bent_ray_algorithm(*, replace: bool = False) -> None:
     register_algorithm(
         "bent_ray_gn",
         BentRayGNAdapter,
-        description="Regularized bent-ray travel-time baseline.",
-        tags=("travel-time", "refraction"),
+        description="Native first-arrival Eikonal Gauss-Newton inversion.",
+        tags=("travel-time", "refraction", "eikonal"),
         replace=replace,
     )
 
 
-__all__ = [
-    "BentRayGNAdapter",
-    "register_bent_ray_algorithm",
-    "run_iterative_travel_time_solver",
-]
+__all__ = ["BentRayGNAdapter", "register_bent_ray_algorithm"]

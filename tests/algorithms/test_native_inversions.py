@@ -1,0 +1,126 @@
+"""End-to-end numerical inversion and hold-out isolation, not clinical validation."""
+
+import numpy as np
+import pytest
+
+from usctbench.algorithms.bent_ray import BentRayGNAdapter
+from usctbench.algorithms.rwave import RWaveAdapter
+from usctbench.core.schema import AlgorithmConfig, GroundTruthSpec, MeasurementSpec
+from usctbench.data.synthetic import make_sound_speed_case
+from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.operators.forward.ray_born import RayBornOperator
+
+
+def small_case(physics):
+    case = make_sound_speed_case(
+        shape=(8, 8), n_transducers=8, inclusion_radius_m=0.002, inclusion_mps=1490
+    )
+    # Smaller exterior water grid keeps routine CI fast; no geometry inference from GT.
+    case.geometry.tx_pos_m *= 0.25
+    case.geometry.rx_pos_m *= 0.25
+    c = case.ground_truth.sound_speed_mps
+    if physics == "bent":
+        op = EikonalForward(case.grid, case.geometry)
+        distance = np.linalg.norm(
+            case.geometry.tx_pos_m[:, None] - case.geometry.rx_pos_m[None, :], axis=-1
+        )
+        case.measurement.delta_tof_s = op.forward(1 / c).reshape(8, 8) - distance / 1500
+    else:
+        op = RayBornOperator(case.grid, case.geometry, [120e3, 160e3, 200e3])
+        case.measurement = MeasurementSpec(
+            domain="frequency",
+            freq_data=op.predict(c),
+            frequencies_hz=op.frequencies_hz,
+            valid_mask=op.valid_pair_mask,
+        )
+    return case
+
+
+@pytest.mark.parametrize(
+    "physics,algorithm", [("bent", BentRayGNAdapter), ("born", RWaveAdapter)]
+)
+def test_native_inversions_reduce_residual_and_need_no_truth(physics, algorithm):
+    case = small_case(physics)
+    case.ground_truth = GroundTruthSpec()
+    config = AlgorithmConfig(
+        parameters={
+            "iterations": 5,
+            "outer_iterations": 2,
+            "inner_iterations": 5,
+            "evaluation": {"receiver_indices": [1]},
+            "stopping": {"update_rtol": None, "objective_rtol": None},
+        }
+    )
+    result = algorithm().run(case, config)
+    assert result.status == "success", result.failure_reason
+    assert result.metrics["data_residual_reduction"] > 0.5
+    assert result.metrics["evaluation"]["receiver"]["num_samples"] > 0
+    assert result.metrics["stopping"]["ground_truth_used_for_stopping"] is False
+    assert "rmse" not in result.metrics
+    assert result.metrics["stopping"]["work"]["adjoint_calls"] > 0
+
+
+@pytest.mark.parametrize(
+    "physics,algorithm", [("bent", BentRayGNAdapter), ("born", RWaveAdapter)]
+)
+def test_heldout_values_do_not_change_training_trajectory(physics, algorithm):
+    case = small_case(physics)
+    altered = case.model_copy(deep=True)
+    data = (
+        altered.measurement.delta_tof_s
+        if physics == "bent"
+        else altered.measurement.freq_data
+    )
+    data[..., 1] *= 7
+    # Disable validation checkpoint selection to compare optimization itself.
+    config = AlgorithmConfig(
+        parameters={
+            "iterations": 2,
+            "inner_iterations": 3,
+            "evaluation": {"receiver_indices": [1]},
+            "stopping": {
+                "restore_best_validation": False,
+                "update_rtol": None,
+                "objective_rtol": None,
+            },
+        }
+    )
+    a, b = algorithm().run(case, config), algorithm().run(altered, config)
+    assert a.status == b.status == "success"
+    np.testing.assert_array_equal(a.sound_speed_mps, b.sound_speed_mps)
+    np.testing.assert_allclose(a.metrics["residual_curve"], b.metrics["residual_curve"])
+    assert (
+        a.metrics["evaluation_split"]["mask_sha256"]
+        == b.metrics["evaluation_split"]["mask_sha256"]
+    )
+
+
+@pytest.mark.parametrize(
+    "physics,algorithm", [("bent", BentRayGNAdapter), ("born", RWaveAdapter)]
+)
+def test_zero_budget_returns_initial_checkpoint_with_reason(physics, algorithm):
+    case = small_case(physics)
+    result = algorithm().run(
+        case, AlgorithmConfig(parameters={"stopping": {"max_forward_calls": 0}})
+    )
+    assert result.status == "success", result.failure_reason
+    assert result.metrics["stop_reason"] == "forward_calls_budget"
+    assert result.metrics["stopping"]["work"]["forward_calls"] == 0
+    np.testing.assert_allclose(result.sound_speed_mps, 1500)
+
+
+def test_frequency_holdout_does_not_train_or_leak_reciprocal_receiver():
+    case = small_case("born")
+    result = RWaveAdapter().run(
+        case,
+        AlgorithmConfig(
+            parameters={
+                "iterations": 4,
+                "evaluation": {"frequency_indices": [2], "receiver_indices": [1]},
+            }
+        ),
+    )
+    assert result.status == "success", result.failure_reason
+    assert result.metrics["evaluation"]["frequency"]["num_samples"] > 0
+    assert result.metrics["evaluation"]["joint"]["num_samples"] > 0
+    assert result.metrics["evaluation_split"]["reciprocal_tx_excluded"] == [1]
