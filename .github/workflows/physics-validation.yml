@@ -1,0 +1,34 @@
+name: physics-validation
+
+on:
+  push:
+    branches: ["work/physics-agent-validation"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive tracked source for reproducible offline validation
+        run: git archive --format=tar.gz HEAD > source-snapshot.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-snapshot
+          path: source-snapshot.tar.gz
+          retention-days: 7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev,viz]"
+      - name: Test
+        run: pytest -q --junitxml=pytest-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: pytest-results.xml
+          retention-days: 14
