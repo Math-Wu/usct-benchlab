@@ -10,14 +10,19 @@ algorithms:
   - name: straight_sart
     config: configs/algorithms/sart.yaml
   - name: bent_ray_gn
-    config: configs/algorithms/bent_ray.yaml
-  - name: rwave_adapter
-    config: configs/algorithms/rwave.yaml
+    config: configs/algorithms/bent_ray_smoke.yaml
+# This suite contains TOF-only surrogates. Ray-Born requires complex pressure;
+# it is validated separately in tests/algorithms/test_native_inversions.py.
 min_cases: 1
-min_records: 5
+min_records: 4
 expected_statuses: [success]
 required_metrics:
-  default: [rmse, ssim, data_relative_residual]
+  default: [rmse, ssim, data_residual_norm, data_residual_reduction]
 thresholds:
   default:
-    data_relative_residual: 1.0
+    rmse: 50.0
+# Relative residual is undefined for the all-zero homogeneous delta-TOF case.
+# Require non-increasing residual instead of replacing 0/0 by a fake score.
+minimums:
+  default:
+    data_residual_reduction: 0.0

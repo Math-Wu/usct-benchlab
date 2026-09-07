@@ -16,8 +16,8 @@ echo "Running unit tests"
 echo "Creating synthetic demo cases in $SMOKE_ROOT"
 PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" -m usctbench.cli data make-synthetic-smoke \
   --out "$SMOKE_ROOT" \
-  --shape 20 \
-  --n-transducers 24
+  --shape "${USCT_SMOKE_SHAPE:-12}" \
+  --n-transducers "${USCT_SMOKE_TRANSDUCERS:-8}"
 
 echo "Running synthetic demo benchmark"
 USCT_SYNTHETIC_CASE_GLOB="$SMOKE_ROOT/cases/*.h5" \

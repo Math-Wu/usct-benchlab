@@ -1,0 +1,14 @@
+# Wiring smoke only. Quantitative physics tests use independent fixtures.
+name: bent_ray_gn
+parameters:
+  outer_iterations: 1
+  inner_iterations: 4
+  regularization: laplacian
+  regularization_lambda: 3.0e-5
+  reference_sound_speed_mps: 1500.0
+  sound_speed_bounds_mps: [1300.0, 1700.0]
+  roi_update_only: true
+  stopping:
+    max_iterations: 1
+    max_forward_calls: 20
+    max_adjoint_calls: 6

@@ -7,11 +7,8 @@ import numpy as np
 from usctbench.algorithms.ray import (
     StraightRayProjector,
     configured_ray_weights,
-    masked_norm,
     ray_weight_metrics,
-    residual_metrics,
     run_with_failure_capture,
-    sirt_solve,
     target_attenuation_integral,
 )
 from usctbench.core.registry import register_algorithm
@@ -29,30 +26,51 @@ class AttenuationSIRTAlgorithm:
             projector = StraightRayProjector.from_case(case)
             target, mask = target_attenuation_integral(case, projector)
             weights = configured_ray_weights(case, projector, mask, config)
-            iterations = int(config.parameters.get("iterations", 50))
+            from usctbench.algorithms._control import InversionControl
+            from usctbench.solvers.row_action import row_action
+
+            if config.parameters.get("stopping", {}).get("target_rmse_mps") is not None:
+                raise ValueError(
+                    "target_rmse_mps is a sound-speed target, not an attenuation target"
+                )
             relaxation = float(config.parameters.get("relaxation", 0.8))
             upper = float(config.parameters.get("attenuation_upper_np_per_m", 80.0))
-            initial_norm = masked_norm(target, mask, weights)
-            attenuation, _residual_norms = sirt_solve(
-                projector,
-                target,
-                mask,
-                iterations=iterations,
-                relaxation=relaxation,
-                nonnegative=True,
-                weights=weights,
+            if not np.isfinite(upper) or upper <= 0:
+                raise ValueError(
+                    "attenuation_upper_np_per_m must be finite and positive"
+                )
+            control = InversionControl(
+                case,
+                config,
+                target.reshape(projector.ray_shape),
+                default_iterations=50,
+                weights=weights.reshape(projector.ray_shape),
+                valid_mask=mask.reshape(projector.ray_shape),
+                iteration_unit="SIRT sweep",
             )
-            attenuation = np.clip(attenuation, 0.0, upper)
-            final_residual = target - projector.forward(attenuation)
-            final_norm = masked_norm(final_residual, mask, weights)
-            metrics = {
-                **residual_metrics(initial_norm, final_norm),
-                "attenuation_input_signal_norm": initial_norm,
-                "attenuation_input_has_signal": bool(initial_norm > 0.0),
-                "attenuation_input_is_surrogate": _is_surrogate_attenuation_case(case),
-                "iterations": iterations,
-                **ray_weight_metrics(weights, mask, config),
-            }
+            attenuation, metrics = row_action(
+                projector,
+                control,
+                initial=np.zeros(case.grid.shape),
+                reference=np.ones(case.grid.shape),
+                project=lambda x: np.clip(x, 0.0, upper),
+                to_image=lambda x: x,
+                relaxation=relaxation,
+            )
+            initial_norm = metrics.get("initial_data_residual_norm")
+            metrics.update(
+                {
+                    "attenuation_input_signal_norm": initial_norm,
+                    "attenuation_input_has_signal": bool(
+                        initial_norm is not None and initial_norm > 0.0
+                    ),
+                    "attenuation_input_is_surrogate": _is_surrogate_attenuation_case(
+                        case
+                    ),
+                    "update_reference_scale_np_per_m": 1.0,
+                    **ray_weight_metrics(weights, mask, config),
+                }
+            )
             if case.ground_truth.attenuation_np_per_m is not None:
                 metrics.update(
                     compute_image_metrics(
