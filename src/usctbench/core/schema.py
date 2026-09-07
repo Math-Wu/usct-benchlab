@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any
+
+from usctbench.core.compat import StrEnum
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator

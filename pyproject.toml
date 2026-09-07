@@ -24,8 +24,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
-  "ruff>=0.5",
-  "black>=24.0"
+  "ruff==0.16.6",
+  "black==26.5.1"
 ]
 viz = [
   "matplotlib>=3.7",
@@ -48,3 +48,10 @@ pythonpath = ["src"]
 
 [tool.black]
 target-version = ["py310"]
+
+# Keep the historical correctness profile stable across Ruff default changes.
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

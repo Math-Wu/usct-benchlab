@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Any
+
+from usctbench.core.compat import StrEnum
 
 
 class MeasurementProvenance(StrEnum):
