@@ -27,7 +27,9 @@ def fit_source_spectrum(
     observed = np.asarray(water_pressure, dtype=complex)
     train = np.asarray(train_mask)
     if green.ndim != 3 or observed.shape != green.shape or train.shape != green.shape:
-        raise ValueError("prediction, water pressure and train_mask must share (f,tx,rx) shape")
+        raise ValueError(
+            "prediction, water pressure and train_mask must share (f,tx,rx) shape"
+        )
     if train.dtype.kind != "b":
         raise ValueError("train_mask must be boolean")
     precision = (
@@ -49,6 +51,10 @@ def fit_source_spectrum(
             "provide independent source calibration, do not fit from held-out data"
         )
     source = numerator / denominator
-    if not np.all(np.isfinite(source)) or np.any(np.abs(source) <= np.finfo(float).tiny):
-        raise ValueError("source calibration is nonfinite or has insufficient excitation")
+    if not np.all(np.isfinite(source)) or np.any(
+        np.abs(source) <= np.finfo(float).tiny
+    ):
+        raise ValueError(
+            "source calibration is nonfinite or has insufficient excitation"
+        )
     return source

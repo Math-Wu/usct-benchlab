@@ -189,3 +189,33 @@ def test_policy_rejects_typos_nan_and_fractional_counts():
     assert not StopPolicy.from_parameters(
         {"stopping": {"restore_best_validation": "false"}}
     ).restore_best_validation
+
+
+def test_termination_is_sticky_and_cannot_replace_checkpoint():
+    m = monitor(max_iterations=1)
+    observe(m, 0)
+    observe(m, 1)
+    before = m.record()
+    assert m.finish("numerical_failure") == "max_iterations"
+    assert observe(m, 2, objective=np.nan) == "max_iterations"
+    assert m.record() == before
+    assert m.record()["termination_category"] == "budget"
+    assert m.record()["quality_target_met"] is False
+
+
+def test_control_rejected_objective_cannot_mismatch_image_and_prediction():
+    from usctbench.algorithms._control import InversionControl
+    from usctbench.core.schema import AlgorithmConfig
+    from usctbench.data.synthetic import make_sound_speed_case
+
+    case = make_sound_speed_case(shape=(4, 4), n_transducers=4)
+    obs = np.ones((4, 4))
+    control = InversionControl(case, AlgorithmConfig(), obs, default_iterations=4)
+    initial = np.zeros((4, 4))
+    control.observe(0, initial, initial, objective=1)
+    control.observe(1, np.ones((4, 4)), obs, objective=np.nan)
+    selected, metrics = control.output(initial)
+    np.testing.assert_array_equal(selected, initial)
+    assert metrics["data_residual_norm"] == 4
+    assert metrics["stop_reason"] == "numerical_failure"
+    assert metrics["stopping"]["termination_category"] == "failure"

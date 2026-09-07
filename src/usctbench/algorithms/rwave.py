@@ -11,6 +11,7 @@ from usctbench.algorithms.ray import (
     speed_bounds,
 )
 from usctbench.core.config import coerce_bool
+from usctbench.data.calibration import fit_water_source
 from usctbench.core.registry import register_algorithm
 from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, USCTCase
 from usctbench.operators.forward.ray_born import RayBornOperator
@@ -104,17 +105,29 @@ class RWaveAdapter:
         def to_speed(delta):
             return 1 / np.sqrt(operator.background_squared_slowness + delta)
 
+        calibration = {
+            "method": "configured_source" if source is not None else "unit_source",
+            "specimen_data_used": False,
+        }
+        # An independently acquired water trace identifies source amplitude and
+        # phase. Scale the Jacobian too; replacing only the additive background
+        # is incorrect whenever the actual source differs from unity.
+        if case.measurement.water_reference is not None and source is None:
+            water_operator = RayBornOperator(
+                case.grid,
+                case.geometry,
+                case.measurement.frequencies_hz,
+                background_sound_speed_mps=c0,
+                exterior_speed_mps=c0,
+                max_cache_bytes=0,
+            )
+            source, calibration = fit_water_source(
+                water_operator.background_data(),
+                case.measurement.water_reference,
+                valid_mask=operator.valid_pair_mask,
+            )
+            operator.source_spectrum = source.copy()
         offset = operator.background_data()
-        # Measured reference is an additive calibration, never a GT-derived synthetic waveform.
-        if case.measurement.water_reference is not None:
-            reference = np.asarray(case.measurement.water_reference)
-            if reference.shape != observed.shape:
-                raise ValueError("frequency water_reference must match freq_data")
-            if not np.all(background == c0):
-                raise ValueError(
-                    "water_reference calibration currently requires a uniform background"
-                )
-            offset = reference
         damping = float(
             p.get("damping", float(p.get("regularization_lambda", 0.0)) ** 2)
         )
@@ -145,6 +158,7 @@ class RWaveAdapter:
                 "model_parameter": "squared_slowness_s2_per_m2",
                 "frequency_convention": "exp(-i omega t)",
                 "source_spectrum_assumed_unit": source is None,
+                "source_calibration": calibration,
                 "roi_update_only": roi_only,
                 "ground_truth_used_for_initialization": False,
             }

@@ -78,6 +78,8 @@ class InversionControl:
         update_relative=None,
         sound_speed=None,
     ):
+        if self.monitor.reason is not None:
+            return self.monitor.reason
         train = residual_statistics(
             prediction, self.observed, mask=self.split.train, weights=self.split.weights
         )
@@ -95,6 +97,7 @@ class InversionControl:
                 mask=self.case.grid.roi_mask,
             )["rmse"]
         previous_best = self.monitor.best_iteration
+        previous_history_length = len(self.monitor.history)
         reason = self.monitor.observe(
             iteration,
             state,
@@ -109,9 +112,12 @@ class InversionControl:
             validation_relative=validation["weighted_relative_residual"],
             quality_rmse_mps=quality,
         )
-        self.last_prediction = np.array(prediction, copy=True)
-        if self.monitor.best_iteration != previous_best:
-            self.best_prediction = self.last_prediction.copy()
+        # A rejected nonfinite state/objective cannot advance the data cache.
+        # Its image and its prediction must refer to the same complete iterate.
+        if len(self.monitor.history) > previous_history_length:
+            self.last_prediction = np.array(prediction, copy=True)
+            if self.monitor.best_iteration != previous_best:
+                self.best_prediction = self.last_prediction.copy()
         return reason
 
     def output(self, fallback):

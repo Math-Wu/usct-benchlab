@@ -169,7 +169,13 @@ class StopMonitor:
         validation_relative=None,
         quality_rmse_mps=None,
     ):
-        if not isinstance(iteration, (int, np.integer)) or iteration < 0:
+        if self.reason is not None:
+            return self.reason
+        if (
+            isinstance(iteration, (bool, np.bool_))
+            or not isinstance(iteration, (int, np.integer))
+            or iteration < 0
+        ):
             raise ValueError("iteration must be a nonnegative integer")
         if self.history and iteration <= self.history[-1]["iteration"]:
             raise ValueError("complete iteration indices must be strictly increasing")
@@ -273,8 +279,9 @@ class StopMonitor:
         return self.reason
 
     def finish(self, reason):
-        self.reason, self.triggers = reason, [reason]
-        return reason
+        if self.reason is None:
+            self.reason, self.triggers = reason, [reason]
+        return self.reason
 
     def selected_state(self):
         if self.policy.restore_best_validation and self.best_state is not None:
@@ -298,4 +305,42 @@ class StopMonitor:
             "policy": asdict(self.policy),
             "budget_scope": "operator_calls; time_checked_between_calls",
             "ground_truth_used_for_stopping": self.policy.target_rmse_mps is not None,
+            "has_complete_checkpoint": self.last_state is not None,
+            "quality_target_met": any(
+                rule in self.triggers
+                for rule in (
+                    "exact_data_fit",
+                    "target_residual",
+                    "noise_discrepancy",
+                    "oracle_quality_target",
+                )
+            ),
+            "termination_category": (
+                "not_terminated"
+                if self.reason is None
+                else (
+                    "budget"
+                    if "budget" in self.reason or self.reason == "max_iterations"
+                    else (
+                        "failure"
+                        if self.reason
+                        in {
+                            "numerical_failure",
+                            "linear_solver_breakdown",
+                            "line_search_failed",
+                        }
+                        else (
+                            "quality_target"
+                            if self.reason
+                            in {
+                                "exact_data_fit",
+                                "target_residual",
+                                "noise_discrepancy",
+                                "oracle_quality_target",
+                            }
+                            else "stagnation"
+                        )
+                    )
+                )
+            ),
         }
