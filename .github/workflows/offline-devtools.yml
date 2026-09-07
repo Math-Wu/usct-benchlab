@@ -12,7 +12,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: pip download --only-binary=:all: --dest wheels black==24.10.0 ruff==0.9.10
+      - run: |
+          pip download --only-binary=:all: --dest wheels black==24.10.0 ruff==0.9.10
       - uses: actions/upload-artifact@v4
         with:
           name: offline-devtools
