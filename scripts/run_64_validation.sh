@@ -28,6 +28,11 @@ run_case() {
   local case_path="$1" prefix="$2"
   python scripts/validate_ray_features.py --handoff "$OUT" --case "$case_path" \
     --features existing --out "$OUT/${prefix}_pixels" 2>&1 | tee "$OUT/${prefix}_pixels.log"
+  if [[ "$prefix" == "final_high" ]]; then
+    python scripts/check_64_baselines.py --reference "$HANDOFF/baselines_64" \
+      --actual "$OUT/${prefix}_pixels/existing" --out "$OUT/baseline_acceptance.json" \
+      2>&1 | tee "$OUT/baseline_acceptance.log"
+  fi
   python scripts/validate_ray_features.py --handoff "$OUT" --case "$case_path" \
     --features existing --model-grid-shape 32 32 --out "$OUT/${prefix}_basis32" \
     2>&1 | tee "$OUT/${prefix}_basis32.log"
