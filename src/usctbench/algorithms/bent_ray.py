@@ -17,6 +17,11 @@ from usctbench.core.registry import register_algorithm
 from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, USCTCase
 from usctbench.core.stopping import BudgetExhausted
 from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.operators.model_space import (
+    BilinearBasis,
+    FineGridRegularizer,
+    ReducedLinearOperator,
+)
 from usctbench.solvers.least_squares import normal_step, regularizer
 
 
@@ -108,6 +113,22 @@ class BentRayGNAdapter:
         ):
             raise ValueError("initialization_iterations must be a positive integer")
 
+        basis = None
+        coefficients = None
+        solver_kind = kind
+        if p.get("model_grid_shape") is not None:
+            if roi is not None:
+                raise ValueError("reduced model currently requires no inversion ROI")
+            if initialization != "configured" or not np.all(initial_speed == c0):
+                raise ValueError(
+                    "reduced Bent currently requires configured water initialization"
+                )
+            if not bounds[0] <= c0 <= bounds[1]:
+                raise ValueError("reference speed must lie within sound-speed bounds")
+            basis = BilinearBasis(case.grid, p["model_grid_shape"])
+            coefficients = np.zeros(basis.shape)
+            solver_kind = FineGridRegularizer(basis, kind)
+
         def objective(state, prediction):
             residual = np.where(
                 control.split.train, control.safe_observed - prediction, 0
@@ -150,24 +171,49 @@ class BentRayGNAdapter:
             for iteration in range(1, control.policy.max_iterations + 1):
                 if control.monitor.reason:
                     break
+                jacobian = (
+                    lin.jacobian
+                    if basis is None
+                    else ReducedLinearOperator(lin.jacobian, basis)
+                )
                 update = normal_step(
-                    lin.jacobian,
+                    jacobian,
                     control.weighted_residual(prediction),
-                    s - s0,
+                    s - s0 if basis is None else coefficients,
                     control,
                     iterations=inner,
                     damping=damping,
-                    regularization=kind,
+                    regularization=solver_kind,
                     roi=roi,
                 )
                 if sigma > 0:
-                    update = _gaussian_smooth(update, sigma)
+                    if basis is None:
+                        update = _gaussian_smooth(update, sigma)
+                    else:
+                        from scipy.ndimage import gaussian_filter
+
+                        update = gaussian_filter(
+                            update,
+                            tuple(
+                                sigma * k / n
+                                for k, n in zip(basis.shape, case.grid.shape)
+                            ),
+                            mode="nearest",
+                        )
                 if roi is not None:
                     update = np.where(roi, update, 0)
                 accepted = False
                 for trial in range(10 if line_search else 1):
-                    candidate = s + step * 0.5**trial * update
-                    candidate = np.clip(candidate, 1 / bounds[1], 1 / bounds[0])
+                    if basis is None:
+                        candidate = s + step * 0.5**trial * update
+                        candidate = np.clip(candidate, 1 / bounds[1], 1 / bounds[0])
+                    else:
+                        candidate_coefficients = np.clip(
+                            coefficients + step * 0.5**trial * update,
+                            1 / bounds[1] - 1 / c0,
+                            1 / bounds[0] - 1 / c0,
+                        )
+                        candidate = s0 + basis.forward(candidate_coefficients)
                     if roi is not None:
                         candidate = np.where(roi, candidate, s0)
                     new_lin = control.call("line_search", forward.linearize, candidate)
@@ -181,6 +227,8 @@ class BentRayGNAdapter:
                     break
                 relative = float(np.linalg.norm(candidate - s) / np.linalg.norm(s))
                 s, lin, prediction, cost = candidate, new_lin, new_prediction, new_cost
+                if basis is not None:
+                    coefficients = candidate_coefficients
                 control.observe(
                     iteration,
                     s,
@@ -200,6 +248,9 @@ class BentRayGNAdapter:
         metrics.update(
             {
                 "backend": "native_eikonal_fast_marching",
+                "model_parameterization": (
+                    {"kind": "pixels"} if basis is None else basis.metadata()
+                ),
                 "true_bent_ray": True,
                 "uses_true_bent_rays": True,
                 "surrogate_travel_time_backend": False,

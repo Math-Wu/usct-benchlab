@@ -18,6 +18,11 @@ from usctbench.algorithms.ray import (
 from usctbench.core.config import coerce_bool
 from usctbench.core.schema import ReconstructionResult
 from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.model_space import (
+    BilinearBasis,
+    FineGridRegularizer,
+    ReducedLinearOperator,
+)
 from usctbench.solvers.projected_cg import projected_cg
 from usctbench.solvers.row_action import row_action
 
@@ -51,15 +56,28 @@ def reconstruct(case, config, algorithm):
         p.get("roi_laplacian", p.get("roi_aware_laplacian", False))
     )
     roi = case.grid.roi_mask if roi_only else None
-    initial = np.zeros(case.grid.shape)
-    s0 = np.full(case.grid.shape, 1.0 / c0)
+    basis = None
+    solver_operator = projector
+    kind = str(p.get("regularization", "identity"))
+    solver_kind = kind
+    model_shape = case.grid.shape
+    if p.get("model_grid_shape") is not None:
+        if roi is not None or (roi_laplacian and case.grid.roi_mask is not None):
+            raise ValueError("reduced model currently requires no inversion ROI")
+        basis = BilinearBasis(case.grid, p["model_grid_shape"])
+        model_shape = basis.shape
+        solver_operator = ReducedLinearOperator(projector, basis)
+        solver_kind = FineGridRegularizer(basis, kind)
+    initial = np.zeros(model_shape)
+    s0 = np.full(model_shape, 1.0 / c0)
 
     def project(x):
         bounded = np.clip(x, 1.0 / high - 1.0 / c0, 1.0 / low - 1.0 / c0)
         return bounded if roi is None else np.where(roi, bounded, 0)
 
     def to_speed(x):
-        return 1.0 / (s0 + x)
+        fine = x if basis is None else basis.forward(x)
+        return 1.0 / (1.0 / c0 + fine)
 
     use_preconditioning = coerce_bool(p.get("coverage_preconditioning", False))
     preconditioner, coverage = None, None
@@ -74,7 +92,7 @@ def reconstruct(case, config, algorithm):
             preconditioner, coverage = control.call(
                 "adjoint",
                 coverage_preconditioner,
-                projector,
+                solver_operator,
                 control.split.train.ravel(),
                 control.split.weights.ravel(),
                 roi_mask=roi,
@@ -93,14 +111,14 @@ def reconstruct(case, config, algorithm):
         state, metrics = control.output(initial)
     elif is_cg:
         state, metrics = projected_cg(
-            projector,
+            solver_operator,
             control,
             initial=initial,
             reference=s0,
             project=project,
             to_image=to_speed,
             damping=float(p.get("damping", lambda_value**2)),
-            regularization=str(p.get("regularization", "identity")),
+            regularization=solver_kind,
             roi=roi,
             regularization_roi=case.grid.roi_mask if roi_laplacian else None,
             preconditioner=preconditioner,
@@ -115,15 +133,21 @@ def reconstruct(case, config, algorithm):
         if not np.isfinite(sigma) or sigma < 0 or every < 0:
             raise ValueError("smoothing parameters must be nonnegative and finite")
 
+        smooth_scale = (
+            sigma
+            if basis is None
+            else tuple(sigma * k / n for k, n in zip(basis.shape, case.grid.shape))
+        )
+
         def smooth(x, iteration):
             return (
-                gaussian_filter(x, sigma, mode="nearest")
+                gaussian_filter(x, smooth_scale, mode="nearest")
                 if sigma > 0 and every > 0 and iteration % every == 0
                 else x
             )
 
         state, metrics = row_action(
-            projector,
+            solver_operator,
             control,
             initial=initial,
             reference=s0,
@@ -140,6 +164,9 @@ def reconstruct(case, config, algorithm):
         {
             "backend": "native_siddon_straight_ray",
             "projector_backend": projector.backend,
+            "model_parameterization": (
+                {"kind": "pixels"} if basis is None else basis.metadata()
+            ),
             "projector_csr_storage_bytes": projector.storage_bytes,
             "roi_update_only": roi_only,
             "roi_laplacian": roi_laplacian,
@@ -182,7 +209,11 @@ def reconstruct(case, config, algorithm):
                 sound_speed,
                 case.ground_truth.sound_speed_mps,
                 roi_mask=case.grid.roi_mask,
-                coverage=coverage,
+                coverage=(
+                    basis.forward(coverage)
+                    if basis is not None and coverage is not None
+                    else coverage
+                ),
                 boundary_band_pixels=int(p.get("boundary_band_pixels", 4)),
             )
         )
