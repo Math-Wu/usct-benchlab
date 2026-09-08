@@ -130,6 +130,9 @@ class BentRayGNAdapter:
             solver_kind = FineGridRegularizer(basis, kind)
 
         def objective(state, prediction):
+            active = control.split.train | control.split.validation
+            if not np.isfinite(prediction[active]).all():
+                raise FloatingPointError("non-finite Eikonal prediction on active data")
             residual = np.where(
                 control.split.train, control.safe_observed - prediction, 0
             )
