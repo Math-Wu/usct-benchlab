@@ -98,7 +98,14 @@ def main():
             (noise - noise.T)[pair_mask], (error - error.T)[pair_mask], atol=1e-18
         )
         np.testing.assert_array_equal(noise[d["validation"]], error[d["validation"]])
-        changed = diagnostic_case(case, d["straight"] + noise, "matched_straight")
+        # Copy non-training observations verbatim: subtract/add roundoff must not
+        # alter even the least significant bit of validation data.
+        target = d["observed"].copy()
+        target[d["train"]] = (d["straight"] + noise)[d["train"]]
+        np.testing.assert_array_equal(
+            target[d["validation"]], d["observed"][d["validation"]]
+        )
+        changed = diagnostic_case(case, target, "matched_straight")
         changed.metadata.update(
             diagnostic_control="pair_decorrelated_model_error",
             forward_model="straight_plus_oracle_derived_error",
