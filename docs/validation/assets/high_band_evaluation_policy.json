@@ -1,0 +1,22 @@
+{
+  "primary_region": "tissue",
+  "cases": {
+    "D510022534": {
+      "version": "tissue_external_water_v1",
+      "primary_region": "tissue",
+      "mask_source": "ground_truth_boundary_connected_water_evaluation_only",
+      "used_for_reconstruction_or_stopping": false,
+      "water_speed_mps": 1500.0,
+      "water_tolerance_mps": 0.1,
+      "data_range_mps": 119.96557676255952,
+      "tissue_pixels": 26332,
+      "full_image_pixels": 65536,
+      "mask_sha256": "6baa5942c93afba21b1cd3a424b8909225fca66c786ab4587f0bdd2274553ccb",
+      "ssim_window": "complete valid windows, up to 7 pixels; global fallback for tiny masks",
+      "water_initialization_comparison_region": "tissue",
+      "water_background_pixels": 39204,
+      "status": "ok"
+    }
+  },
+  "old_reconstruction_metrics_overwritten": false
+}

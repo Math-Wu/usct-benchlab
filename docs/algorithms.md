@@ -41,6 +41,17 @@ recorded as failure, never convergence.
 
 ## Parameters and evaluation
 
+`scripts/validate_physics.py extract` accepts `--tof-method xcorr` (default) or
+`envelope`. The latter uses a Hilbert-envelope early crossing relative to the
+independent water trace, with `--envelope-fraction 0.1` and a minimum peak/noise
+ratio of 5 in the Python API. The source duration and physical speed bounds
+define its search window. Confidence describes signal quality, not proof of
+first-arrival accuracy; finite bandwidth, pre-ringing and multipath can bias it.
+Use a fresh `--case-file` to retain the original pressure-derived case.
+
+The full Green implementation requires SciPy >= 1.12, matching the documented
+[`gmres` rtol API](https://docs.scipy.org/doc/scipy-1.12.0/reference/generated/scipy.sparse.linalg.gmres.html).
+
 Resolved configs are saved with each result. Common stopping/evaluation settings
 are documented in [agent_evaluation.md](agent_evaluation.md); all active rules
 are OR conditions, and validation observations cannot enter an update.

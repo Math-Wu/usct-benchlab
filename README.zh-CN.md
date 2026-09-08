@@ -524,6 +524,11 @@ runs/usctbench_runs/synthetic_demo_YYYYMMDDTHHMMSSZ/benchmark_report.md
 `metrics.json` 保存每个 case 的图像指标和数据一致性指标；
 `metadata.yaml` 记录算法、配置路径、case id、运行时间、状态和测量来源。
 
+新 CLI/benchmark 运行以**去水背景的组织区 RMSE、PSNR、SSIM**作为主要图像指标，
+同时单独保留全图指标（`full_image_*`）和水背景 RMSE。GT 掩码仅用于反演结束后的
+评价，不参与初始化、更新或停止；没有 GT 时图像指标不可用，仍可报告测量/留出残差。
+历史示例图保留原有指标定义，不能直接混用。详见[评价规则](docs/agent_evaluation.md)。
+
 ## 示例结果
 
 OpenBreastUS 四类样本对比：

@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import h5py
@@ -16,6 +17,29 @@ def pipeline():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_huber_option_is_parsed_by_reconstruct(monkeypatch):
+    module = pipeline()
+    captured = []
+    monkeypatch.setattr(module, "reconstruct", captured.append)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "validate_physics.py",
+            "reconstruct",
+            "--out",
+            "unused",
+            "--algorithms",
+            "straight_cgls",
+            "--cgls-huber-delta-us",
+            "0.1",
+        ],
+    )
+    module.main()
+    assert captured[0].cgls_huber_delta_us == 0.1
+    assert not captured[0].detail_probe
 
 
 def prepared(tmp_path):

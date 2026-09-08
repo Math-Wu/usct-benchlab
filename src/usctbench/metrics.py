@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import hashlib
+from typing import Any
 
 import numpy as np
 from skimage.metrics import structural_similarity
@@ -31,6 +33,7 @@ def compute_image_metrics(
     *,
     mask: np.ndarray | None = None,
     prefix: str = "",
+    data_range: float | None = None,
 ) -> dict[str, float]:
     """Compute scalar image metrics over finite ROI pixels."""
 
@@ -46,9 +49,12 @@ def compute_image_metrics(
     mae = float(np.mean(np.abs(error)))
     target_range = float(np.max(truth) - np.min(truth))
     nrmse = rmse / target_range if target_range > 0 else 0.0 if rmse == 0 else math.inf
-    data_range = (
-        target_range if target_range > 0 else max(float(np.max(np.abs(truth))), 1.0)
-    )
+    if data_range is None:
+        data_range = (
+            target_range if target_range > 0 else max(float(np.max(np.abs(truth))), 1.0)
+        )
+    if not np.isfinite(data_range) or data_range <= 0:
+        raise ValueError("data_range must be finite and positive")
     psnr = math.inf if mse == 0 else 20.0 * math.log10(data_range / math.sqrt(mse))
     return {
         f"{prefix}rmse": rmse,
@@ -63,6 +69,142 @@ def compute_image_metrics(
         ),
         f"{prefix}global_ssim": _global_ssim(pred, truth, data_range=data_range),
     }
+
+
+def non_water_tissue_mask(
+    target: np.ndarray,
+    *,
+    water_speed_mps: float = 1500.0,
+    water_tolerance_mps: float = 0.1,
+) -> np.ndarray:
+    """Evaluation-only mask: remove edge-connected water, retain enclosed tissue.
+
+    An enclosed tissue pixel equal to water speed is retained. No reconstructed
+    values or acquisition/inversion ROI enter this deterministic GT mask.
+    """
+    from scipy.ndimage import binary_propagation
+
+    truth = np.asarray(target, dtype=float)
+    if truth.ndim != 2 or min(truth.shape) < 1:
+        raise ValueError("tissue evaluation requires a 2-D ground-truth image")
+    if (
+        not np.isfinite(water_speed_mps)
+        or water_speed_mps <= 0
+        or not np.isfinite(water_tolerance_mps)
+        or water_tolerance_mps < 0
+    ):
+        raise ValueError(
+            "water speed must be positive and tolerance finite/nonnegative"
+        )
+    finite = np.isfinite(truth)
+    water = finite & (np.abs(truth - water_speed_mps) <= water_tolerance_mps)
+    seeds = np.zeros(truth.shape, dtype=bool)
+    seeds[[0, -1], :] = water[[0, -1], :]
+    seeds[:, [0, -1]] = water[:, [0, -1]]
+    exterior = binary_propagation(seeds, mask=water)
+    return finite & ~exterior
+
+
+def compute_regional_image_metrics(
+    prediction: np.ndarray,
+    target: np.ndarray | None,
+    *,
+    primary_region: str = "tissue",
+    water_speed_mps: float = 1500.0,
+    water_tolerance_mps: float = 0.1,
+    data_range_mps: float | None = None,
+) -> dict[str, Any]:
+    """Post-reconstruction benchmark scores; never used for stopping or updates.
+
+    Preserve full-image and tissue scores under explicit prefixes. Unprefixed
+    RMSE/PSNR/SSIM follow the declared primary region. Both regions use one fixed
+    range from the finite full GT (or an explicit protocol range), not a range
+    chosen separately for each reconstruction. Missing/empty GT gives no score.
+    """
+    if primary_region not in {"tissue", "full_image"}:
+        raise ValueError("primary_region must be tissue or full_image")
+    names = ("rmse", "mae", "nrmse", "psnr", "ssim", "global_ssim")
+    info = {
+        "version": "tissue_external_water_v1",
+        "primary_region": primary_region,
+        "mask_source": "ground_truth_boundary_connected_water_evaluation_only",
+        "used_for_reconstruction_or_stopping": False,
+        "water_speed_mps": float(water_speed_mps),
+        "water_tolerance_mps": float(water_tolerance_mps),
+    }
+    result = {key: None for key in names}
+    # Clear legacy baseline scores when the requested region is unavailable.
+    result.update(
+        {
+            "water_" + key: None
+            for key in (
+                "baseline_rmse",
+                "reconstruction_rmse",
+                "absolute_rmse_improvement",
+                "relative_rmse_improvement",
+                "improved",
+            )
+        }
+    )
+    result["image_evaluation"] = info
+    result["primary_image_region"] = primary_region
+    if target is None:
+        info["status"] = "ground_truth_unavailable"
+        return result
+    truth = np.asarray(target, dtype=float)
+    tissue = non_water_tissue_mask(
+        truth, water_speed_mps=water_speed_mps, water_tolerance_mps=water_tolerance_mps
+    )
+    finite = np.isfinite(truth)
+    if not finite.any():
+        info["status"] = "ground_truth_unavailable"
+        return result
+    if data_range_mps is None:
+        data_range_mps = float(np.ptp(truth[finite]))
+        if data_range_mps == 0:
+            data_range_mps = max(float(np.max(np.abs(truth[finite]))), 1.0)
+    full = compute_image_metrics(prediction, truth, data_range=data_range_mps)
+    result.update({"full_image_" + k: v for k, v in full.items()})
+    info.update(
+        {
+            "data_range_mps": float(data_range_mps),
+            "tissue_pixels": int(tissue.sum()),
+            "full_image_pixels": int(finite.sum()),
+            "mask_sha256": hashlib.sha256(
+                np.array(tissue.shape, dtype="<i8").tobytes() + tissue.tobytes()
+            ).hexdigest(),
+            "ssim_window": "complete valid windows, up to 7 pixels; global fallback for tiny masks",
+        }
+    )
+    if tissue.any():
+        scores = compute_image_metrics(
+            prediction, truth, mask=tissue, data_range=data_range_mps
+        )
+        result.update({"tissue_" + k: v for k, v in scores.items()})
+        if primary_region == "tissue":
+            result.update(scores)
+    if primary_region == "full_image":
+        result.update(full)
+    if tissue.any() or primary_region == "full_image":
+        result.update(
+            compute_baseline_improvement_metrics(
+                prediction,
+                truth,
+                water_speed_mps,
+                mask=tissue if primary_region == "tissue" else finite,
+            )
+        )
+        info["water_initialization_comparison_region"] = primary_region
+    water = finite & ~tissue
+    info["water_background_pixels"] = int(water.sum())
+    if water.any():
+        error = np.asarray(prediction)[water] - truth[water]
+        result["water_background_rmse"] = float(np.sqrt(np.mean(error**2)))
+        result["water_background_bias"] = float(np.mean(error))
+    info["status"] = (
+        "ok" if tissue.any() or primary_region == "full_image" else "empty_tissue"
+    )
+    return result
 
 
 def compute_baseline_improvement_metrics(

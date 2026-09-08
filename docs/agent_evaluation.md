@@ -1,5 +1,49 @@
 # Agent evaluation and stopping contract
 
+## Tissue image scores after reconstruction
+
+`usct run` and `usct bench` evaluate the selected final reconstruction, after the
+solver returns. Their primary `rmse`, `psnr`, and `ssim` now refer to **non-water
+tissue**. The same values are retained as `tissue_*`; `full_image_*` and
+`water_background_rmse` / `water_background_bias` remain separate. This is not
+water-value subtraction or background correction of the reconstructed image.
+Plots keep the full field of view and a common color scale.
+
+The deterministic GT mask removes water connected to the image boundary using
+four-neighbor connectivity and `abs(GT - c_water) <= tolerance`. Enclosed pixels
+equal to water speed remain in tissue. All methods on a case share this mask;
+its SHA-256, pixel count, water speed and tolerance are recorded in
+`image_evaluation` in both metrics and metadata. The default water speed follows
+the configured/case reference speed (otherwise 1500 m/s); tolerance is 0.1 m/s.
+This rule assumes a known water background. Use a protocol-appropriate policy
+for other acquisitions; it is not a general-purpose anatomical segmenter.
+
+PSNR and SSIM use one range from the finite **full GT**, shared across methods
+and regions, or an explicit positive protocol range. They never use each
+reconstruction's contrast range. SSIM averages complete valid windows of up to
+7 x 7 pixels, with a documented global-SSIM fallback for very small/thin masks.
+Thus exterior pixels cannot alter tissue scores. Nonfinite reconstruction
+values in the water are still a numerical failure, not hidden by the mask.
+
+No GT mask is passed to initialization, the inversion ROI, source calibration,
+line search, holdout selection or stopping. An absent GT or empty tissue gives
+null primary scores and an explicit status, not a silent full-image fallback.
+Standalone low-level `algorithm.run` image metrics retain their existing
+full-image/explicit-ROI behavior; the common regional policy is applied by the
+benchmark runner. Historical run files are not rewritten. Re-evaluations create
+new reports with a region/version label; do not mix these with old scores.
+
+Optional per-algorithm configuration:
+
+```yaml
+parameters:
+  image_evaluation:
+    primary_region: tissue  # or full_image for an explicitly declared protocol
+    water_speed_mps: 1500.0
+    water_tolerance_mps: 0.1
+    # data_range_mps: 200.0  # optional fixed protocol range, not a fitted value
+```
+
 ## Data separation
 
 `make_data_split` accepts real `(tx, rx)` observations or complex
@@ -72,10 +116,10 @@ reason unavailable. Importing a finished artifact never retroactively stops it.
 `evaluation.receiver`, `evaluation.frequency` and `evaluation.joint` contain
 disjoint holdout statistics. Full-pressure and contrast-pressure residuals are
 both retained for Ray-Born. Image metrics reject nonfinite reconstructions rather
-than hiding failed pixels. SSIM averages only windows fully inside the valid mask;
-PSNR uses the valid GT range. A missing ROI means the full image, not an inferred
-breast mask. A uniform returned image can have a moderate SSIM, so no single score
-is an acceptance certificate.
+than hiding failed pixels. The post-reconstruction image policy above is separate
+from the inversion ROI: a missing inversion ROI does not infer a breast support.
+A uniform returned image can have a moderate SSIM, so no single score is an
+acceptance certificate.
 
 See [the independent eight-case report](validation/2026-09-08_physics.md) for
 measured results and remaining limitations, including a validation-selected

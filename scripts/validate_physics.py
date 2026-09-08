@@ -203,6 +203,8 @@ def extract(args):
         case.measurement.time_axis_s,
         distances,
         pulse_duration_s=3 / record["source_frequency_hz"],
+        picker=getattr(args, "tof_method", "xcorr"),
+        envelope_fraction=getattr(args, "envelope_fraction", 0.1),
     )
     # Direct-adjacent pairs do not cross the object and are most sensitive to
     # finite source support. The rule depends on geometry only, never on labels.
@@ -324,6 +326,11 @@ def reconstruct(args):
         raise ValueError("no pressure_case.h5 matched; prepare/simulate/extract first")
     if not 1 <= args.workers <= 8 or not np.isfinite(args.seconds) or args.seconds < 0:
         raise ValueError("workers must be 1..8 and seconds finite/nonnegative")
+    if args.cgls_huber_delta_us is not None:
+        if not np.isfinite(args.cgls_huber_delta_us) or args.cgls_huber_delta_us <= 0:
+            raise ValueError("cgls-huber-delta-us must be finite and positive")
+        if "straight_cgls" not in args.algorithms:
+            raise ValueError("cgls-huber-delta-us requires straight_cgls")
     if Path(args.run_name).name != args.run_name or args.run_name in {".", ".."}:
         raise ValueError("run-name must be a single directory name")
     repo = Path(__file__).resolve().parents[1]
@@ -368,6 +375,12 @@ def reconstruct(args):
                 "bent_ray_gn": 20,
             }[algorithm]
         cfg.parameters["evaluation"] = {"receiver_fraction": 0.125, "seed": 42}
+        if algorithm == "straight_cgls" and args.cgls_huber_delta_us is not None:
+            cfg.parameters.update(
+                robust_loss="huber",
+                huber_delta_s=args.cgls_huber_delta_us * 1e-6,
+                irls_iterations=3,
+            )
         cfg.parameters["stopping"] = {
             "max_iterations": cap,
             "max_elapsed_s": args.seconds,
@@ -472,6 +485,8 @@ def main():
     p.add_argument("--kwave-path", required=True)
     p.add_argument("--device", type=int, default=0)
     p = sub.add_parser("extract")
+    p.add_argument("--tof-method", choices=["xcorr", "envelope"], default="xcorr")
+    p.add_argument("--envelope-fraction", type=float, default=0.1)
     p.add_argument("--case-file", default="pressure_case.h5")
     p.add_argument("--out", required=True)
     p.add_argument("--image-size", type=int, default=48)
@@ -494,6 +509,11 @@ def main():
     )
     p = sub.add_parser("reconstruct")
     p.add_argument("--case-file", default="pressure_case.h5")
+    p.add_argument(
+        "--cgls-huber-delta-us",
+        type=float,
+        help="Optional CGLS Huber threshold in microseconds; all other settings unchanged",
+    )
     p.add_argument(
         "--rwave-initialization",
         choices=["configured", "phase_cgls"],

@@ -17,10 +17,12 @@ min_cases: 1
 min_records: 4
 expected_statuses: [success]
 required_metrics:
-  default: [rmse, ssim, data_residual_norm, data_residual_reduction]
+  # Includes an all-water case, which correctly has no tissue image score.
+  # Gate this numerical smoke on explicit full-FOV scores, not a silent fallback.
+  default: [full_image_rmse, full_image_ssim, data_residual_norm, data_residual_reduction]
 thresholds:
   default:
-    rmse: 50.0
+    full_image_rmse: 50.0
 # Relative residual is undefined for the all-zero homogeneous delta-TOF case.
 # Require non-increasing residual instead of replacing 0/0 by a fake score.
 minimums:

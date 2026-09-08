@@ -32,6 +32,7 @@ from usctbench.core.schema import (
     USCTCase,
 )
 from usctbench.viz import write_preview_png
+from usctbench.metrics import compute_regional_image_metrics
 
 _ENV_DEFAULT_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}")
 
@@ -94,6 +95,23 @@ def run_algorithm_case(
         config.parameters.setdefault("_run_output_dir", str(out_root / case_id))
         algorithm = get_algorithm(algorithm_name)
         result = algorithm.run(case, config)
+        if result.sound_speed_mps is not None and result.status == ResultStatus.SUCCESS:
+            # Reporting only: the solver has already selected its final state.
+            image_policy = dict(config.parameters.get("image_evaluation", {}))
+            image_policy.setdefault(
+                "water_speed_mps",
+                config.parameters.get(
+                    "reference_sound_speed_mps",
+                    case.metadata.get("reference_sound_speed_mps", 1500.0),
+                ),
+            )
+            result.metrics.update(
+                compute_regional_image_metrics(
+                    result.sound_speed_mps,
+                    case.ground_truth.sound_speed_mps,
+                    **image_policy,
+                )
+            )
     except Exception as exc:
         result = ReconstructionResult(
             algorithm=algorithm_for_report,
@@ -314,6 +332,7 @@ def _write_result_artifacts(
                 "config": config,
                 "resolved_config": result.metrics.get("resolved_config"),
                 "implementation": result.metrics.get("implementation"),
+                "image_evaluation": result.metrics.get("image_evaluation"),
                 "error_type": _classify_failure(result.failure_reason),
                 "runtime_s": result.runtime_s,
                 "peak_memory_mb": peak_memory_mb,
@@ -759,6 +778,11 @@ def _write_summary_csv(records: list[dict[str, Any]], path: Path) -> None:
         "pass_reasons",
         "fail_reasons",
         "runtime_s",
+        "primary_image_region",
+        "rmse",
+        "psnr",
+        "ssim",
+        "water_background_rmse",
         "peak_memory_mb",
         "artifacts_complete",
         "failure_report_present",
@@ -832,8 +856,24 @@ def _write_benchmark_report(
             "",
             "## Results",
             "",
+            "Image scores use each row's declared region. Do not mix historical full-image and tissue scores.",
+            "",
+            "| Algorithm | Case | Region | RMSE (m/s) | PSNR (dB) | SSIM | Water RMSE |",
+            "| --- | --- | --- | ---: | ---: | ---: | ---: |",
         ]
     )
+    for record in records:
+
+        def score(name):
+            value = record.get(name)
+            return f"{value:.5g}" if _is_number(value) else "N/A"
+
+        lines.append(
+            f"| {record.get('algorithm')} | {record.get('case_id')} | "
+            f"{record.get('primary_image_region', 'legacy/unspecified')} | "
+            f"{score('rmse')} | {score('psnr')} | {score('ssim')} | {score('water_background_rmse')} |"
+        )
+    lines.extend(["", "### Execution", ""])
     for record in records:
         lines.append(
             f"- `{record.get('algorithm')}` / `{record.get('case_id')}`: "

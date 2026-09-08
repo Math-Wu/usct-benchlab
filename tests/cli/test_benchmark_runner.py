@@ -1,10 +1,80 @@
 from __future__ import annotations
 
 import yaml
+import json
+import h5py
+import numpy as np
 
 from usctbench.benchmark.runner import run_algorithm_case, run_benchmark_suite
 from usctbench.cli import register_builtin_algorithms
 from usctbench.core.io import write_case_hdf5
+
+
+def test_no_ground_truth_keeps_holdout_scores_without_image_scores(
+    synthetic_case, tmp_path
+):
+    register_builtin_algorithms()
+    case = synthetic_case.model_copy(deep=True)
+    case.ground_truth.sound_speed_mps = None
+    case_path = write_case_hdf5(case, tmp_path / "no_gt.h5")
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {
+                "name": "straight_cgls",
+                "parameters": {
+                    "stopping": {"max_iterations": 3},
+                    "evaluation": {"receiver_fraction": 0.125, "seed": 42},
+                },
+            }
+        )
+    )
+    out = run_algorithm_case("straight_cgls", case_path, cfg, tmp_path / "run")
+    metrics = json.loads((out / "metrics.json").read_text())
+    assert metrics["rmse"] is metrics["psnr"] is metrics["ssim"] is None
+    assert metrics["image_evaluation"]["status"] == "ground_truth_unavailable"
+    assert metrics["evaluation"]["receiver"]["weighted_relative_residual"] >= 0
+    metadata = yaml.safe_load((out / "metadata.yaml").read_text())
+    assert metadata["image_evaluation"] == metrics["image_evaluation"]
+
+
+def test_image_region_changes_only_reporting_not_reconstruction(
+    synthetic_case, tmp_path
+):
+    register_builtin_algorithms()
+    case_path = write_case_hdf5(synthetic_case, tmp_path / "case.h5")
+    outputs = []
+    for region in ("tissue", "full_image"):
+        cfg = tmp_path / f"{region}.yaml"
+        cfg.write_text(
+            yaml.safe_dump(
+                {
+                    "name": "straight_cgls",
+                    "parameters": {
+                        "stopping": {"max_iterations": 3},
+                        "image_evaluation": {"primary_region": region},
+                    },
+                }
+            )
+        )
+        outputs.append(
+            run_algorithm_case("straight_cgls", case_path, cfg, tmp_path / region)
+        )
+    with (
+        h5py.File(outputs[0] / "result.h5") as a,
+        h5py.File(outputs[1] / "result.h5") as b,
+    ):
+        np.testing.assert_array_equal(
+            a["sound_speed_mps"][()], b["sound_speed_mps"][()]
+        )
+    a, b = [json.loads((p / "metrics.json").read_text()) for p in outputs]
+    assert a["rmse"] == a["tissue_rmse"]
+    assert b["rmse"] == b["full_image_rmse"]
+    # Timing is naturally different; compare the numerical history only.
+    for row_a, row_b in zip(a["iteration_history"], b["iteration_history"]):
+        for key in ("iteration", "residual_norm", "objective"):
+            assert row_a[key] == row_b[key]
+    assert a["stop_reason"] == b["stop_reason"]
 
 
 def test_line_search_failure_is_not_a_passing_benchmark():

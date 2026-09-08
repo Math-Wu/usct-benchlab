@@ -60,3 +60,56 @@ def test_metrics_reject_nonfinite_recon_instead_of_hiding_pixels():
     mask = np.ones(truth.shape, bool)
     mask[5, 5] = False
     assert compute_image_metrics(prediction, truth, mask=mask)["rmse"] == 0
+
+
+@pytest.mark.parametrize("shift", [-0.71e-6, 0.93e-6])
+def test_envelope_onset_is_water_relative_and_amplitude_invariant(shift):
+    time = np.arange(1800) * 5e-8 - 5e-6
+    center = 0.06 / 1500 + 3e-6
+
+    def pulse(offset):
+        return np.exp(-(((time - center - offset) / 1e-6) ** 2)) * np.cos(
+            2 * np.pi * 800e3 * (time - center - offset)
+        )
+
+    pressure = 0.2 * pulse(shift)[:, None, None]
+    water = pulse(0)[:, None, None]
+    delays, valid, weights, qc = water_relative_delays(
+        pressure,
+        water,
+        time,
+        np.array([[0.06]]),
+        picker="envelope",
+        pulse_duration_s=6e-6,
+    )
+    assert valid.all() and weights.min() > 0.9
+    np.testing.assert_allclose(delays, shift, atol=1e-8)
+    assert qc["ground_truth_used"] is False
+    zeros, valid, _, _ = water_relative_delays(
+        np.zeros_like(pressure),
+        water,
+        time,
+        np.array([[0.06]]),
+        picker="envelope",
+    )
+    assert not valid.any() and np.isnan(zeros).all()
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"picker": "unknown"},
+        {"envelope_fraction": 0},
+        {"minimum_peak_snr": -1},
+        {"pulse_duration_s": float("nan")},
+    ],
+)
+def test_arrival_configuration_fails_explicitly(settings):
+    with pytest.raises(ValueError):
+        water_relative_delays(
+            np.zeros((20, 1, 1)),
+            np.zeros((20, 1, 1)),
+            np.arange(20) * 1e-7,
+            np.array([[0.01]]),
+            **settings,
+        )

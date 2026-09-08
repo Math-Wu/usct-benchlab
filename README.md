@@ -558,6 +558,13 @@ runs/usctbench_runs/synthetic_demo_YYYYMMDDTHHMMSSZ/benchmark_report.md
 truth and forward measurements are available. `metadata.yaml` records the
 algorithm, config path, case id, runtime, status, and measurement provenance.
 
+New CLI/benchmark runs use **non-water tissue RMSE, PSNR and SSIM** as the
+primary image scores. Full-image scores (`full_image_*`) and water-background
+RMSE remain separate. The GT mask is used only after reconstruction, never for
+initialization or stopping; without GT, image scores are unavailable and
+measurement/holdout residuals remain available. Historical figures retain their
+original metric definitions. See [evaluation policy](docs/agent_evaluation.md).
+
 ## Example Results
 
 The following figures are historical main-branch examples. Their bent/rWave

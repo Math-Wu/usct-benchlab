@@ -12,14 +12,15 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.ndimage import binary_fill_holes, gaussian_filter
+from scipy.ndimage import gaussian_filter
 
-from usctbench.metrics import compute_image_metrics
+from usctbench.metrics import compute_regional_image_metrics, non_water_tissue_mask
 
 
-def render(root, out, case_ids, stages):
+def render(root, out, case_ids, stages, metric_region="tissue"):
     out.mkdir(parents=True, exist_ok=True)
     rows = []
+    policies = {}
     methods = [item.split(":", 2) for item in stages]
     fig, axes = plt.subplots(
         len(case_ids),
@@ -31,9 +32,13 @@ def render(root, out, case_ids, stages):
     for row_index, case_id in enumerate(case_ids):
         with h5py.File(root / case_id / "pressure_case.h5") as handle:
             truth = handle["ground_truth/sound_speed_mps"][()]
-        water = np.isclose(truth, 1500, atol=0.1, rtol=0)
+            metadata = json.loads(handle.attrs.get("metadata_json", "{}"))
+        water_speed = float(metadata.get("reference_sound_speed_mps", 1500.0))
         # Evaluation only: this mask is never exported to an inverse algorithm.
-        tissue = binary_fill_holes(~water)
+        tissue = non_water_tissue_mask(truth, water_speed_mps=water_speed)
+        plt.imsave(
+            out / f"{case_id}_evaluation_mask.png", tissue, cmap="gray", vmin=0, vmax=1
+        )
         gt_highpass = truth - gaussian_filter(truth, 2.0)
         panels = [("GT", truth, None)]
         for stage, algorithm, title in methods:
@@ -41,6 +46,11 @@ def render(root, out, case_ids, stages):
             with h5py.File(path / "result.h5") as handle:
                 pixels = handle["sound_speed_mps"][()]
             metrics = json.loads((path / "metrics.json").read_text())
+            regional = compute_regional_image_metrics(
+                pixels, truth, primary_region=metric_region, water_speed_mps=water_speed
+            )
+            policies[case_id] = regional["image_evaluation"]
+            metrics = {**metrics, **regional}
             stop = metrics["stopping"]
             record = dict(case_id=case_id, stage=stage, algorithm=algorithm)
             record.update(
@@ -65,17 +75,20 @@ def render(root, out, case_ids, stages):
                     )
                 }
             )
-            record["water_rmse_mps_posthoc_GT_mask"] = (
-                float(np.sqrt(np.mean((pixels[water] - truth[water]) ** 2)))
-                if water.any()
-                else None
+            record.update(
+                {k: v for k, v in regional.items() if k != "image_evaluation"}
             )
+            record["evaluation_mask_sha256"] = regional["image_evaluation"][
+                "mask_sha256"
+            ]
+            for key in (
+                "version",
+                "water_speed_mps",
+                "data_range_mps",
+                "tissue_pixels",
+            ):
+                record["evaluation_" + key] = regional["image_evaluation"][key]
             if tissue.any():
-                record.update(
-                    compute_image_metrics(
-                        pixels, truth, mask=tissue, prefix="tissue_posthoc_"
-                    )
-                )
                 hp = pixels - gaussian_filter(pixels, 2.0)
                 record["tissue_highpass_corr_posthoc_sigma2px"] = (
                     float(np.corrcoef(hp[tissue], gt_highpass[tissue])[0, 1])
@@ -108,20 +121,37 @@ def render(root, out, case_ids, stages):
                 ax.set_ylabel(case_id.replace("breast_train_speed_", ""), fontsize=9)
                 ax.set_xlabel(f"{truth.shape[0]} x {truth.shape[1]}")
             else:
-                reason = metrics["stop_reason"].replace("_", " ")
+
+                def score(name):
+                    value = metrics.get(name)
+                    return f"{value:.3f}" if value is not None else "N/A"
+
                 ax.set_xlabel(
-                    f"PSNR {metrics['psnr']:.2f}  SSIM {metrics['ssim']:.3f}\n{reason}",
+                    f"RMSE {score('rmse')} m/s\nPSNR {score('psnr')} dB  SSIM {score('ssim')}",
                     fontweight="bold",
                     fontsize=9,
                 )
         fig.colorbar(im, ax=axes[row_index], shrink=0.8, pad=0.01, label="m/s")
-    fig.suptitle("Same k-Wave pressure | 128 transmitters / 128 receivers", fontsize=13)
+    fig.suptitle(
+        f"Same k-Wave pressure | {metric_region} metrics | full field of view",
+        fontsize=13,
+    )
     fig.savefig(out / "reconstructions.png", dpi=160)
     plt.close(fig)
     with (out / "metrics.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+    (out / "evaluation_policy.json").write_text(
+        json.dumps(
+            {
+                "primary_region": metric_region,
+                "cases": policies,
+                "old_reconstruction_metrics_overwritten": False,
+            },
+            indent=2,
+        )
+    )
     print(json.dumps(rows, indent=2), flush=True)
 
 
@@ -131,10 +161,13 @@ if __name__ == "__main__":
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--case-ids", nargs="+", required=True)
     parser.add_argument(
+        "--metric-region", choices=["tissue", "full_image"], default="tissue"
+    )
+    parser.add_argument(
         "--stages",
         nargs="+",
         required=True,
         help="stage:registered_algorithm:display_title",
     )
     args = parser.parse_args()
-    render(args.root, args.out, args.case_ids, args.stages)
+    render(args.root, args.out, args.case_ids, args.stages, args.metric_region)
