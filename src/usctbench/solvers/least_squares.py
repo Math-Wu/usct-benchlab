@@ -8,6 +8,8 @@ from usctbench.core.stopping import BudgetExhausted
 
 
 def regularizer(image, kind="identity"):
+    if hasattr(kind, "forward") and hasattr(kind, "adjoint"):
+        return kind.forward(image)
     if kind in {"identity", "l2"}:
         return np.asarray(image)
     if kind in {"laplacian", "roughness"}:
@@ -24,6 +26,8 @@ def regularizer(image, kind="identity"):
 
 
 def normal_regularizer(image, kind="identity"):
+    if hasattr(kind, "forward") and hasattr(kind, "adjoint"):
+        return kind.adjoint(kind.forward(image))
     return (
         image
         if kind in {"identity", "l2"}
