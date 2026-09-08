@@ -131,9 +131,14 @@ candidate sound speed.
 | Bent-ray | High-frequency travel time follows an eikonal model; rays bend according to the current sound speed or slowness. | Regularized nonlinear travel-time mismatch based on $T_s(r;c)$. | Refraction-aware surrogate comparison when full waveform inversion is too expensive or unavailable. |
 | FWI | Full acoustic wave or Helmholtz propagation; measured data are pressure waveforms or complex pressure samples. | PDE-constrained waveform mismatch over sources, receivers, and frequencies. | High-fidelity reporting when external k-Wave/FWI artifacts or an external FWI command are available. |
 
-The `bent_ray_gn` command is a regularized bent-ray-style travel-time baseline,
-not a full external eikonal solver. The FWI path is an adapter for high-fidelity
-external k-Wave/FWI results.
+`bent_ray_gn` solves a nonlinear Eikonal equation with fast marching and an
+exact discrete Jacobian/adjoint. `rwave_adapter` requires calibrated complex
+pressure and relinearizes finite-frequency Born scattering. Its supplied config
+uses full Green backgrounds from a free-space volume-integral solve; the
+Eikonal/WKB Green approximation remains an explicit option. Neither uses the
+straight-ray projector. These discretizations
+do not guarantee a monotone ranking of image quality or reproduce every option
+of upstream r-Wave. The production FWI path remains the external MATLAB driver.
 For more detail, see [docs/math_formulation.md](docs/math_formulation.md).
 
 ## Supported Algorithms
@@ -144,13 +149,27 @@ For more detail, see [docs/math_formulation.md](docs/math_formulation.md).
 | SIRT | `straight_sirt` | Simultaneous iterative ray tomography | `USCTCase` with ring geometry and travel-time measurements | Robust iterative sound-speed baseline | `configs/algorithms/sirt.yaml` |
 | SART | `straight_sart` | Ordered/subset algebraic ray update | `USCTCase` with ring geometry and travel-time measurements | Ordered-update straight-ray baseline | `configs/algorithms/sart.yaml` |
 | Attenuation SIRT | `attenuation_sirt` | Straight-ray log-amplitude tomography | `USCTCase` with log-amplitude measurements | Attenuation baseline | `configs/algorithms/attenuation.yaml` |
-| Bent-ray | `bent_ray_gn` | Regularized bent-ray-style travel-time baseline | `USCTCase` with travel-time measurements | Refraction-style comparison | `configs/algorithms/bent_ray.yaml` |
-| rWave adapter | `rwave_adapter` | Ray-Born-inspired adapter baseline | `USCTCase` with travel-time measurements | Wave-inspired adapter comparison | `configs/algorithms/rwave.yaml` |
+| Bent-ray | `bent_ray_gn` | Nonlinear Eikonal / fast marching | First-arrival times or calibrated delays | Refraction-corrected tomography | `configs/algorithms/bent_ray.yaml` |
+| rWave adapter | `rwave_adapter` | Relinearized finite-frequency Ray-Born | Complex `(frequency,tx,rx)` pressure and calibrated source or independent water reference | Scattering-sensitive pressure inversion | `configs/algorithms/rwave.yaml` |
 | FWI adapter | `fwi_kwave_adapter` | PDE-level full-wave inversion adapter | `USCTCase` plus external k-Wave/FWI artifact or command path | High-fidelity FWI reporting | `configs/algorithms/fwi_kwave.yaml` |
 | Diffusion FWI adapter | `diffusion_fwi_kwave_adapter` | External diffusion-prior k-Wave/FWI DPS adapter | `USCTCase` plus external DPS `.mat`/`.json` artifact or command path | Report existing diffusion + FWI outputs in the same benchmark format | `configs/algorithms/diffusion_fwi_kwave.yaml` |
 | Tiny FWI sanity | `fwi_tiny` | Small waveform-inversion sanity model | Small synthetic sound-speed case | Local waveform-inversion plumbing test | `configs/algorithms/fwi_tiny.yaml` |
 
 More details are in [docs/algorithms.md](docs/algorithms.md).
+
+### Physics and Agent Validation
+
+Operators are separated into `operators/forward/` and `operators/adjoint/`, each
+containing straight-ray, Eikonal, Ray-Born and external full-wave implementations.
+See [operator contracts](docs/operator_contract.md) for units, exact versus
+approximate derivatives, and the optional live MATLAB Helmholtz bridge.
+
+Native solvers support grouped receiver/frequency validation and OR stopping:
+residual/noise targets, update/objective/validation stagnation, time/call budgets
+and iteration caps. Reports retain the actual stop reason, selected checkpoint
+and work counts. GT metrics are optional and never select iterates by default.
+See [evaluation and stopping](docs/agent_evaluation.md) and the
+[reproducible validation workflow](docs/physics_validation.md).
 
 ### Diffusion + FWI Adapter
 
@@ -349,10 +368,15 @@ rWave adapter:
 
 ```bash
 usct run rwave_adapter \
-  --case "$USCT_WORKSPACE/data/synthetic_demo/cases/synthetic_circular_sos.h5" \
+  --case "$USCT_WORKSPACE/data/physics/example/pressure_case.h5" \
   --config configs/algorithms/rwave.yaml \
   --out runs/single_rwave
 ```
+
+This case must contain actual complex pressure and source calibration, not a
+speed-map-derived ToF case. Create a pressure pair using the validation workflow;
+`mode: fixed_background` explicitly selects the linear Born reference instead
+of the default nonlinear background updates.
 
 FWI adapter:
 
@@ -535,6 +559,11 @@ truth and forward measurements are available. `metadata.yaml` records the
 algorithm, config path, case id, runtime, status, and measurement provenance.
 
 ## Example Results
+
+The following figures are historical main-branch examples. Their bent/rWave
+columns predate the native physics operators and are not validation of the new
+implementations. See [physics validation](docs/physics_validation.md) for current
+measurements, grids and acceptance boundaries.
 
 OpenBreastUS four-class comparison:
 

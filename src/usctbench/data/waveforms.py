@@ -112,8 +112,30 @@ def _read_channels(dataset, axes, tx, rx, n_time, max_output_bytes):
             "selected pressure tensor exceeds max_output_bytes; select fewer channels"
         )
     result = np.empty(shape, dtype=dataset.dtype)
-    # Read one trace at a time: neither the full acquisition nor a complete
-    # unselected transmit block needs to fit in memory. Preserve caller order.
+    # MATLAB v7.3 commonly compresses one time plane across ALL channels.
+    # Trace-by-trace access decompresses that plane n_tx*n_rx times. Read bounded
+    # time slabs over the requested channel bounding box, then restore order.
+    # A very sparse selection with an oversized bounding box keeps the trace
+    # fallback rather than allocating the complete acquisition.
+    tx0, rx0 = int(np.min(tx)), int(np.min(rx))
+    tx_span, rx_span = int(np.max(tx)) - tx0 + 1, int(np.max(rx)) - rx0 + 1
+    plane_bytes = tx_span * rx_span * dataset.dtype.itemsize
+    temporary_limit = min(max_output_bytes, 16 * 1024**2)
+    if plane_bytes <= temporary_limit:
+        block_size = max(1, temporary_limit // plane_bytes)
+        permutation = tuple(axes.index(a) for a in ("time", "tx", "rx"))
+        for start in range(0, n_time, block_size):
+            stop = min(start + block_size, n_time)
+            slices = {
+                "time": slice(start, stop),
+                "tx": slice(tx0, tx0 + tx_span),
+                "rx": slice(rx0, rx0 + rx_span),
+            }
+            block = dataset[tuple(slices[a] for a in axes)].transpose(permutation)
+            result[start:stop] = block[:, np.asarray(tx) - tx0][
+                :, :, np.asarray(rx) - rx0
+            ]
+        return result
     for i, transmitter in enumerate(tx):
         for j, receiver in enumerate(rx):
             selector = [slice(None)] * 3
@@ -208,6 +230,7 @@ def convert_kwave_pressure_mat(
     )
     spectrum = pressure_spectrum(pressure, time, validation_frequency)
     keep_frequency = frequencies_hz is not None
+    reference_time = reference
     if reference is not None and keep_frequency:
         reference = pressure_spectrum(reference, time, frequencies_hz)
     geometry = GeometrySpec(tx_pos_m=positions[tx, ::-1], rx_pos_m=positions[rx, ::-1])
@@ -255,6 +278,7 @@ def convert_kwave_pressure_mat(
             freq_data=spectrum if keep_frequency else None,
             frequencies_hz=np.asarray(frequencies_hz) if keep_frequency else None,
             water_reference=reference,
+            water_reference_time=reference_time,
             valid_mask=valid,
         ),
         ground_truth=GroundTruthSpec(**truth),

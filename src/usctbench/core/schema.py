@@ -108,6 +108,8 @@ class MeasurementSpec(_ArrayModel):
     freq_data: np.ndarray | None = None
     time_data: np.ndarray | None = None
     water_reference: np.ndarray | None = None
+    water_reference_time: np.ndarray | None = None
+    source_spectrum: np.ndarray | None = None
     source_wavelet: np.ndarray | None = None
     time_axis_s: np.ndarray | None = None
     tof_s: np.ndarray | None = None
@@ -125,6 +127,8 @@ class MeasurementSpec(_ArrayModel):
         "freq_data",
         "time_data",
         "water_reference",
+        "water_reference_time",
+        "source_spectrum",
         "source_wavelet",
         "time_axis_s",
         "tof_s",
@@ -242,6 +246,24 @@ class USCTCase(_ArrayModel):
         for name, value in arrays.items():
             if value is not None and value.shape != expected_shape:
                 raise ValueError(f"{name} must match (n_tx, n_rx)={expected_shape}")
+        measurement = self.measurement
+        if measurement.water_reference_time is not None:
+            if (
+                measurement.time_data is None
+                or measurement.water_reference_time.shape != measurement.time_data.shape
+            ):
+                raise ValueError("water_reference_time must match time_data")
+        if measurement.source_spectrum is not None:
+            if measurement.frequencies_hz is None:
+                raise ValueError("source_spectrum requires frequencies_hz")
+            shape = (len(measurement.frequencies_hz), expected_shape[0])
+            if measurement.source_spectrum.shape not in {
+                shape,
+                (shape[0],),
+            } or not np.all(np.isfinite(measurement.source_spectrum)):
+                raise ValueError(
+                    "source_spectrum must be finite (frequency,tx) or (frequency,)"
+                )
 
 
 class AlgorithmConfig(_ArrayModel):

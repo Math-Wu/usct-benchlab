@@ -143,9 +143,12 @@ $$
 +\lambda R(c).
 $$
 
-The `bent_ray_gn` command is a regularized bent-ray-style travel-time
-baseline. It records `full_external_eikonal_solver = False` and
-`backend = "regularized_travel_time_baseline"`.
+`bent_ray_gn` now solves the first-order discrete Eikonal problem with fast
+marching, including water padding, bilinear receivers and water calibration.
+Its tangent differentiates the accepted upwind stencil and its adjoint reverses
+that same computational tape. A regularized GN step updates slowness and
+backtracking evaluates a new nonlinear travel-time solve. This is a native
+discretization, not the external upstream ray-shooting implementation.
 
 ## Weak-Scattering / Ray-Born Model
 
@@ -164,9 +167,23 @@ kernel, and $\delta m(x)$ is a contrast parameter. A complete implementation
 requires complex frequency-domain pressure data and careful reference-field
 handling.
 
-The `rwave_adapter` command is an rWave/ray-Born-inspired adapter
-baseline. It records `full_ray_born_solver = False` and
-`backend = "adapter_style_travel_time_baseline"`.
+`rwave_adapter` uses $m=c^{-2}$, complex outgoing Green functions and the discrete
+Born map $J\delta m=\omega^2\Delta A\,G_r\operatorname{diag}(\delta m)G_s q_s$.
+Its real-model adjoint obeys $\operatorname{Re}\langle Jv,z\rangle=\langle v,J^*z\rangle$.
+The supplied nonlinear config recomputes full Green fields from the discrete
+volume-integral equation at each trial model:
+
+$$
+U = U_0 + G_0 V(m) U, \qquad V(m)=\omega^2\Delta A\,\operatorname{diag}(m-m_0).
+$$
+
+Linear convolution is evaluated by zero-padded FFT, not periodic propagation.
+The resulting full-field Born Jacobian is the discrete derivative up to GMRES
+tolerance. This is distorted Born, not a complete upstream r-Wave reproduction.
+For the optional Eikonal/WKB predictor, the Born map remains only an approximate
+derivative; an exact frozen transpose does not imply a passing WKB derivative
+test. Acceptance always uses newly computed nonlinear training pressure.
+See [operator contracts](operator_contract.md) for this distinction.
 
 ## FWI PDE-Constrained Objective
 
@@ -195,7 +212,7 @@ result using the package-standard benchmark outputs.
 | Simultaneous iterative ray tomography | `straight_sirt` | `delta_tof_s` | Sound speed |
 | Ordered/subset algebraic ray update | `straight_sart` | `delta_tof_s` | Sound speed |
 | Straight-ray log-amplitude tomography | `attenuation_sirt` | `log_amp` | Attenuation |
-| Regularized bent-ray-style travel-time baseline | `bent_ray_gn` | `delta_tof_s` | Sound speed |
-| Ray-Born-inspired adapter baseline | `rwave_adapter` | `delta_tof_s` | Sound speed |
+| Nonlinear Eikonal travel-time tomography | `bent_ray_gn` | `delta_tof_s` or `tof_s` | Sound speed |
+| Relinearized finite-frequency Ray-Born | `rwave_adapter` | `freq_data`, calibrated source/reference | Sound speed |
 | PDE-level full-wave inversion adapter | `fwi_kwave_adapter` | External FWI artifact or command | Sound speed |
 | Small waveform-inversion sanity model | `fwi_tiny` | Synthetic waveform case | Sound speed |

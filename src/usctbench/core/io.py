@@ -109,6 +109,8 @@ def write_case_hdf5(case: USCTCase, path: str | Path) -> Path:
             "freq_data",
             "time_data",
             "water_reference",
+            "water_reference_time",
+            "source_spectrum",
             "source_wavelet",
             "time_axis_s",
             "tof_s",
@@ -167,6 +169,10 @@ def read_case_hdf5(path: str | Path) -> USCTCase:
             freq_data=_read_dataset(measurement_group, "freq_data"),
             time_data=_read_dataset(measurement_group, "time_data"),
             water_reference=_read_dataset(measurement_group, "water_reference"),
+            water_reference_time=_read_dataset(
+                measurement_group, "water_reference_time"
+            ),
+            source_spectrum=_read_dataset(measurement_group, "source_spectrum"),
             source_wavelet=_read_dataset(measurement_group, "source_wavelet"),
             time_axis_s=_read_dataset(measurement_group, "time_axis_s"),
             tof_s=_read_dataset(measurement_group, "tof_s"),

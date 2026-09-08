@@ -1,9 +1,29 @@
 import h5py
+from itertools import permutations
 import numpy as np
 import pytest
 
 from usctbench.core.io import read_case_hdf5
-from usctbench.data.waveforms import convert_kwave_pressure_mat, pressure_spectrum
+from usctbench.data.waveforms import (
+    _read_channels,
+    convert_kwave_pressure_mat,
+    pressure_spectrum,
+)
+
+
+@pytest.mark.parametrize("axes", list(permutations(("time", "tx", "rx"))))
+def test_chunked_channel_slabs_preserve_axes_and_selection(tmp_path, axes):
+    canonical = np.arange(17 * 5 * 6, dtype=np.float32).reshape(17, 5, 6)
+    permutation = tuple(("time", "tx", "rx").index(a) for a in axes)
+    raw = canonical.transpose(permutation)
+    chunks = tuple(1 if a == "time" else raw.shape[i] for i, a in enumerate(axes))
+    with h5py.File(tmp_path / "chunked.h5", "w") as handle:
+        dataset = handle.create_dataset(
+            "p", data=raw, chunks=chunks, compression="gzip"
+        )
+        actual = _read_channels(dataset, axes, [4, 0], [5, 2], 17, 300)
+        expected = canonical[:, [4, 0]][:, :, [5, 2]]
+        np.testing.assert_array_equal(actual, expected)
 
 
 def test_dtft_sign_scale_nonzero_origin_and_nonfft_frequency():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import glob
+import hashlib
 import json
 import math
 import numpy as np
@@ -33,6 +34,17 @@ from usctbench.core.schema import (
 from usctbench.viz import write_preview_png
 
 _ENV_DEFAULT_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}")
+
+
+def _implementation_digest():
+    """Fingerprint actual package sources, including uncommitted development code."""
+    root = Path(__file__).resolve().parents[1]
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if path.suffix in {".py", ".m"} and path.is_file():
+            digest.update(path.relative_to(root).as_posix().encode())
+            digest.update(b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
 
 
 def load_algorithm_config(path: str | Path) -> AlgorithmConfig:
@@ -66,11 +78,14 @@ def run_algorithm_case(
     algorithm_for_report = algorithm_name
     config_for_report = str(config_path)
     memory_before_mb = _peak_memory_mb()
+    implementation_before = _implementation_digest()
+    resolved_config = None
     case: USCTCase | None = None
     try:
         case = read_case_hdf5(case_path)
         case_id = case.case_id
         config = load_algorithm_config(config_path)
+        resolved_config = config.model_dump(mode="json")
         if config.name is not None and config.name != algorithm_name:
             raise ValueError(
                 "algorithm/config mismatch: "
@@ -88,6 +103,13 @@ def run_algorithm_case(
             failure_reason=f"{type(exc).__name__}: {exc}",
         )
     memory_after_mb = _peak_memory_mb()
+    implementation_after = _implementation_digest()
+    result.metrics["implementation"] = {
+        "source_sha256_at_start": implementation_before,
+        "source_changed_during_run": implementation_before != implementation_after,
+        "source_sha256_at_finish": implementation_after,
+    }
+    result.metrics["resolved_config"] = resolved_config
     if case is not None:
         for key, value in _feature_qc_metrics(case).items():
             result.metrics.setdefault(key, value)
@@ -290,6 +312,8 @@ def _write_result_artifacts(
                 ),
                 **measurement_metadata,
                 "config": config,
+                "resolved_config": result.metrics.get("resolved_config"),
+                "implementation": result.metrics.get("implementation"),
                 "error_type": _classify_failure(result.failure_reason),
                 "runtime_s": result.runtime_s,
                 "peak_memory_mb": peak_memory_mb,
@@ -329,11 +353,7 @@ def _write_result_artifacts(
 def _write_straight_ray_diagnostics(
     result: ReconstructionResult, case: USCTCase | None, out_dir: Path
 ) -> None:
-    ray_diagnostic_algorithms = {"bent_ray_gn", "rwave_adapter"}
-    if case is None or (
-        not str(result.algorithm).startswith("straight_")
-        and str(result.algorithm) not in ray_diagnostic_algorithms
-    ):
+    if case is None or not str(result.algorithm).startswith("straight_"):
         return
     try:
         from usctbench.algorithms.ray import (
@@ -542,6 +562,10 @@ def _assess_record(
         pass_reasons.append("required artifacts present")
 
     algorithm_name = str(record.get("algorithm", ""))
+    if record.get("stopping", {}).get("termination_category") == "failure":
+        fail_reasons.append(
+            f"solver stopped unsuccessfully: {record.get('stop_reason')}"
+        )
 
     for key in _required_metrics_for_algorithm(
         protocol.get("required_metrics", []), algorithm_name

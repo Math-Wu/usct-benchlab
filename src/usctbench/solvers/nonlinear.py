@@ -1,0 +1,171 @@
+"""Relinearized pressure inversion with acceptance on the nonlinear model."""
+
+from __future__ import annotations
+
+import numpy as np
+from scipy.ndimage import gaussian_filter
+
+from usctbench.core.stopping import BudgetExhausted
+from usctbench.solvers.least_squares import normal_step, regularizer
+
+
+def nonlinear_least_squares(
+    forward,
+    control,
+    *,
+    initial,
+    bounds,
+    inner_iterations=12,
+    damping=0.0,
+    regularization="laplacian",
+    roi=None,
+    step_length=1.0,
+    smooth_sigma=0.0,
+    max_update_mps=12.0,
+    max_backtracks=10,
+):
+    """Inexact Gauss-Newton outer steps; no validation values enter updates.
+
+    A Born step can fail to descend for a WKB model (caustics, low frequency or
+    discretization error). Such a run stops with line_search_failed, not a claim
+    of convergence. The returned state/prediction is an atomic complete iterate.
+    """
+    for name, value in (
+        ("inner_iterations", inner_iterations),
+        ("max_backtracks", max_backtracks),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, np.integer))
+            or value <= 0
+        ):
+            raise ValueError(f"{name} must be a positive integer")
+    for name, value in (
+        ("step_length", step_length),
+        ("max_update_mps", max_update_mps),
+    ):
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and positive")
+    if (
+        not np.isfinite(smooth_sigma)
+        or smooth_sigma < 0
+        or not np.isfinite(damping)
+        or damping < 0
+    ):
+        raise ValueError("smoothing and damping must be finite and nonnegative")
+    state = np.asarray(initial, dtype=float).copy()
+    reference = state.copy()
+    attempts = []
+    derivative_kind = None
+
+    def objective(model, prediction):
+        residual = np.where(control.split.train, control.safe_observed - prediction, 0)
+        reg = regularizer(model - reference, regularization)
+        return float(
+            0.5 * np.sum(control.precision * np.abs(residual) ** 2)
+            + 0.5 * damping * np.vdot(reg, reg).real
+        )
+
+    try:
+        linearization = control.call("forward", forward.linearize, state)
+        derivative_kind = linearization.derivative_kind
+        cost = objective(state, linearization.value)
+        control.observe(
+            0,
+            state,
+            linearization.value,
+            objective=cost,
+            sound_speed=1 / np.sqrt(state),
+        )
+        for iteration in range(1, control.policy.max_iterations + 1):
+            if control.monitor.reason is not None:
+                break
+            direction = normal_step(
+                linearization.jacobian,
+                control.weighted_residual(linearization.value),
+                state - reference,
+                control,
+                iterations=inner_iterations,
+                damping=damping,
+                regularization=regularization,
+                roi=roi,
+            )
+            if smooth_sigma:
+                direction = gaussian_filter(direction, smooth_sigma, mode="nearest")
+            if roi is not None:
+                direction = np.where(roi, direction, 0)
+            if not np.all(np.isfinite(direction)):
+                raise FloatingPointError("nonfinite Born update")
+            if not np.any(direction):
+                control.monitor.finish("stationary_update")
+                break
+            speed = 1 / np.sqrt(state)
+            accepted = False
+            for backtrack in range(max_backtracks):
+                alpha = step_length * 0.5**backtrack
+                candidate = np.clip(
+                    state + alpha * direction, 1 / bounds[1] ** 2, 1 / bounds[0] ** 2
+                )
+                candidate_speed = np.clip(
+                    1 / np.sqrt(candidate),
+                    speed - max_update_mps,
+                    speed + max_update_mps,
+                )
+                candidate = 1 / candidate_speed**2
+                if roi is not None:
+                    candidate = np.where(roi, candidate, reference)
+                try:
+                    trial = control.call("line_search", forward.linearize, candidate)
+                    trial_cost = objective(candidate, trial.value)
+                except FloatingPointError:
+                    attempts.append(
+                        {
+                            "iteration": iteration,
+                            "step_length": alpha,
+                            "objective": None,
+                            "accepted": False,
+                            "rejection": "nonfinite_trial_pressure",
+                        }
+                    )
+                    continue
+                accepted = bool(np.isfinite(trial_cost) and trial_cost < cost)
+                attempts.append(
+                    {
+                        "iteration": iteration,
+                        "step_length": alpha,
+                        "objective": trial_cost if np.isfinite(trial_cost) else None,
+                        "accepted": accepted,
+                    }
+                )
+                if accepted:
+                    break
+            if not accepted:
+                control.monitor.finish("line_search_failed")
+                break
+            update = float(np.linalg.norm(candidate - state) / np.linalg.norm(state))
+            state, linearization, cost = candidate, trial, trial_cost
+            control.work.counts["background_builds"] = forward.background_builds
+            control.work.counts["eikonal_source_solves"] = forward.eikonal_solves
+            control.observe(
+                iteration,
+                state,
+                trial.value,
+                objective=cost,
+                update_relative=update,
+                sound_speed=1 / np.sqrt(state),
+            )
+        if control.monitor.reason is None:
+            control.monitor.finish("max_iterations")
+    except BudgetExhausted as exc:
+        control.monitor.finish(exc.reason)
+    except FloatingPointError:
+        control.monitor.finish("numerical_failure")
+    control.work.counts["background_builds"] = forward.background_builds
+    control.work.counts["eikonal_source_solves"] = forward.eikonal_solves
+    control.work.counts["green_source_solves"] = getattr(forward, "green_solves", 0)
+    control.work.counts["green_matvecs"] = getattr(forward, "green_matvecs", 0)
+    selected, metrics = control.output(reference)
+    metrics["line_search_history"] = attempts
+    metrics["derivative_kind"] = derivative_kind
+    metrics["nonlinear_background_updates"] = max(0, len(control.monitor.history) - 1)
+    return selected, metrics

@@ -1,0 +1,21 @@
+name: physics_pressure
+# Supply canonical pressure cases containing independent water data and ToF.
+case_glob: ${USCT_PRESSURE_CASE_GLOB:-data/physics/*/pressure_case.h5}
+outputs:
+  root: ${USCT_RUN_ROOT:-runs/usctbench_runs}
+algorithms:
+  - name: straight_cgls
+    config: configs/algorithms/cgls.yaml
+  - name: straight_sirt
+    config: configs/algorithms/sirt.yaml
+  - name: straight_sart
+    config: configs/algorithms/sart.yaml
+  - name: bent_ray_gn
+    config: configs/algorithms/bent_ray.yaml
+  - name: rwave_adapter
+    config: configs/algorithms/rwave.yaml
+min_cases: 1
+min_records: 5
+expected_statuses: [success]
+required_metrics:
+  default: [data_relative_residual]

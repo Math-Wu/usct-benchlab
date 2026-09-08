@@ -27,7 +27,9 @@ the active stencil; changes of the first-arrival branch can be nonsmooth.
 This is a numerically implemented first-arrival model, **not** a verbatim port
 of r-Wave's off-grid Heun shooting/ray-linking implementation. Its limitations
 include first-order grid error, first-arrival-only propagation, no multiple
-arrivals, no diffraction, and pure-Python marching cost on large grids.
+arrivals and no diffraction. Install `.[performance]` for optional compiled
+marching/tangent/adjoint loops; regression tests compare the same discretization
+with the pure-Python reference, without fastmath or reduced precision.
 
 ### Tests completed at the first implementation checkpoint
 
@@ -38,9 +40,25 @@ arrivals, no diffraction, and pure-Python marching cost on large grids.
 - A slow inclusion produces a delay different from fixed straight integration.
 - Rejection of zero, negative, NaN, and infinite slowness.
 
-Commands: `pytest -q` (40 passed at this checkpoint) and
-`ruff check src/usctbench/operators tests/operators` (passed).
-These are numerical/software tests, not clinical validation.
+The tests above remain regression gates. Current A100 results, independent
+k-Wave pressure data, eight breast cases and image evidence are recorded in
+[validation/2026-09-08_physics.md](validation/2026-09-08_physics.md).
+These are numerical/software and phantom tests, not clinical validation.
+
+## Ray-Born and full-wave continuation
+
+Native Born inversion relinearizes the background and line-searches on recomputed
+pressure. The supplied config uses full Green volume-integral backgrounds.
+The optional Eikonal/WKB model is not the full upstream ray-shooting/caustic
+implementation: five of eight earlier coarse-grid inversions failed to find a
+descent step. The high-resolution background-error check and reconstruction
+results are separated in the validation record, not combined into one ranking.
+
+The optional full-wave bridge exports the actual external WaveformInversionUST
+Helmholtz matrix, with a separate real-model complex adjoint. Finite differences
+and one controlled truth-free update have been tested on A100/MATLAB. This does
+not certify the production driver's complete optimization trajectory; that
+driver and its gradient choices are preserved.
 
 ## Research basis
 

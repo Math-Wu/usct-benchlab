@@ -31,6 +31,7 @@ def small_case(physics):
             domain="frequency",
             freq_data=op.predict(c),
             frequencies_hz=op.frequencies_hz,
+            source_spectrum=op.source_spectrum,
             valid_mask=op.valid_pair_mask,
         )
     return case
@@ -44,9 +45,11 @@ def test_native_inversions_reduce_residual_and_need_no_truth(physics, algorithm)
     case.ground_truth = GroundTruthSpec()
     config = AlgorithmConfig(
         parameters={
+            "mode": "fixed_background",
             "iterations": 5,
             "outer_iterations": 2,
             "inner_iterations": 5,
+            "regularization_lambda": 3e-5,
             "evaluation": {"receiver_indices": [1]},
             "stopping": {"update_rtol": None, "objective_rtol": None},
         }
@@ -75,6 +78,7 @@ def test_heldout_values_do_not_change_training_trajectory(physics, algorithm):
     # Disable validation checkpoint selection to compare optimization itself.
     config = AlgorithmConfig(
         parameters={
+            "mode": "fixed_background",
             "iterations": 2,
             "inner_iterations": 3,
             "evaluation": {"receiver_indices": [1]},
@@ -124,3 +128,30 @@ def test_frequency_holdout_does_not_train_or_leak_reciprocal_receiver():
     assert result.metrics["evaluation"]["frequency"]["num_samples"] > 0
     assert result.metrics["evaluation"]["joint"]["num_samples"] > 0
     assert result.metrics["evaluation_split"]["reciprocal_tx_excluded"] == [1]
+
+
+def test_bent_cgls_initialization_does_not_use_heldout_data():
+    case = small_case("bent")
+    case.ground_truth = GroundTruthSpec()
+    altered = case.model_copy(deep=True)
+    altered.measurement.delta_tof_s[:, 1] *= 100
+    config = AlgorithmConfig(
+        parameters={
+            "initialization": "cgls",
+            "initialization_iterations": 10,
+            "iterations": 2,
+            "inner_iterations": 4,
+            "smooth_sigma": 0.4,
+            "evaluation": {"receiver_indices": [1]},
+            "stopping": {
+                "restore_best_validation": False,
+                "objective_rtol": None,
+                "update_rtol": None,
+            },
+        }
+    )
+    a, b = [BentRayGNAdapter().run(c, config) for c in (case, altered)]
+    assert a.status == b.status == "success", a.failure_reason
+    np.testing.assert_array_equal(a.sound_speed_mps, b.sound_speed_mps)
+    assert a.metrics["initialization_training_only"] is True
+    assert "rmse" not in a.metrics

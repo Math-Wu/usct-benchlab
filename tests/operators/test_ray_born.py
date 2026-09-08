@@ -1,9 +1,110 @@
 import numpy as np
+import pytest
 from scipy.special import hankel1
 
 from usctbench.core.schema import GeometrySpec, GridSpec
 from usctbench.operators import adjoint_error
 from usctbench.operators.forward.ray_born import RayBornOperator
+from usctbench.operators.forward.ray_born import RayBornForward
+from usctbench.operators.forward.volume_integral import VolumeIntegralGreen
+
+
+def test_volume_solver_checks_deadline_inside_source_solve():
+    from usctbench.core.stopping import BudgetExhausted
+
+    op = setup_operator(True)
+    calls = []
+
+    def deadline():
+        calls.append(1)
+        if len(calls) == 3:
+            raise BudgetExhausted("time_budget")
+
+    solver = VolumeIntegralGreen(
+        op.grid,
+        180e3,
+        op.background,
+        1500,
+        rtol=1e-12,
+        maxiter=20,
+        budget_check=deadline,
+    )
+    with pytest.raises(BudgetExhausted, match="time_budget"):
+        solver.fields(op.green_fields(0))
+    assert len(calls) == 3
+
+
+def test_conservative_transport_converges_for_radial_energy_flux():
+    from usctbench.operators._marching import conservative_transport
+
+    errors = []
+    for n in (32, 64):
+        h = 1 / n
+        y, x = np.mgrid[:n, :n] * h
+        distance = np.hypot(y + 0.2, x - 0.5)
+        initial = -0.5 * np.log(distance.ravel())
+        parents = np.zeros((n * n, 2), dtype=int)
+        parents[:n] = -1
+        actual = conservative_transport(
+            np.argsort(distance.ravel()),
+            parents,
+            distance.ravel(),
+            (n, n),
+            np.array([h, h]),
+            initial,
+        )
+        intensity = np.exp(2 * actual).reshape(n, n)
+        errors.append(np.mean(np.abs(intensity[3:] * distance[3:] - 1)))
+    assert errors[1] < 0.6 * errors[0]
+    assert errors[1] < 0.03
+
+
+def test_volume_convolution_is_linear_not_periodic():
+    op = setup_operator()
+    solver = VolumeIntegralGreen(
+        op.grid, 180e3, op.background, 1500, rtol=1e-10, maxiter=20
+    )
+    impulse = np.zeros(op.grid.shape)
+    impulse[-1, -1] = 1
+    result = solver.convolve(impulse)
+    points = np.indices(op.grid.shape).transpose(1, 2, 0)
+    distance = np.linalg.norm(
+        (points - np.array(op.grid.shape) + 1) * op.grid.spacing_m, axis=-1
+    )
+    exact = 0.25j * hankel1(
+        0, 2 * np.pi * 180e3 / 1500 * np.maximum(distance, op.source_radius_m)
+    )
+    np.testing.assert_allclose(result[:-1], exact[:-1], atol=1e-14)
+
+
+def test_volume_born_derivative_matches_nonlinear_finite_difference():
+    base = setup_operator(True)
+    forward = RayBornForward(
+        base.grid,
+        base.geometry,
+        base.frequencies_hz,
+        source_spectrum=base.source_spectrum,
+        green_backend="volume_integral",
+        green_solver_rtol=1e-12,
+        max_cache_bytes=10**6,
+    )
+    model = 1 / base.background**2
+    lin = forward.linearize(model)
+    rng = np.random.default_rng(53)
+    dm = rng.normal(size=model.shape) * 1e-9
+    epsilon = 0.01
+    numerical = (
+        forward.forward(model + epsilon * dm) - forward.forward(model - epsilon * dm)
+    ) / (2 * epsilon)
+    np.testing.assert_allclose(
+        lin.jacobian.forward(dm), numerical, rtol=2e-5, atol=1e-10
+    )
+    complex_data = rng.normal(size=lin.value.shape) + 1j * rng.normal(
+        size=lin.value.shape
+    )
+    assert adjoint_error(lin.jacobian, dm, complex_data) < 1e-12
+    assert lin.derivative_kind == "discrete_volume_integral_born_derivative"
+    assert forward.green_solves > 0
 
 
 def setup_operator(heterogeneous=False, cache=0):
@@ -37,6 +138,17 @@ def test_complex_real_adjoint_and_no_dense_jacobian():
         assert op.green_method == (
             "eikonal_wkb_transport" if heterogeneous else "analytic_hankel"
         )
+
+
+def test_normal_diagonal_matches_explicit_basis_columns():
+    op = setup_operator()
+    weights = np.arange(np.prod(op.data_shape)).reshape(op.data_shape) / 10
+    diagonal = op.normal_diagonal(weights)
+    for index in ((0, 0), (2, 7), (8, 9)):
+        basis = np.zeros(op.grid.shape)
+        basis[index] = 1
+        expected = np.sum(weights * np.abs(op.forward(basis)) ** 2)
+        np.testing.assert_allclose(diagonal[index], expected, rtol=1e-12)
 
 
 def test_homogeneous_born_matches_independent_point_scatterer():

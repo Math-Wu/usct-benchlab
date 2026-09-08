@@ -38,8 +38,10 @@ def fit_water_source(unit_water_prediction, water_reference, *, valid_mask=None)
             "each frequency/transmitter needs a nonzero water calibration channel"
         )
     source = np.sum(u.conj() * w, axis=-1) / denominator
-    if not np.all(np.isfinite(source)):
-        raise ValueError("water source calibration overflow")
+    if not np.all(np.isfinite(source)) or np.any(
+        np.abs(source) <= np.finfo(float).tiny
+    ):
+        raise ValueError("water source calibration overflow or no excitation")
     statistics = residual_statistics(unit * source[..., None], water, mask=active)
     return source, {
         "method": "independent_water_complex_least_squares_per_frequency_transmitter",

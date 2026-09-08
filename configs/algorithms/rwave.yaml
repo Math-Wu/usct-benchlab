@@ -1,11 +1,24 @@
 name: rwave_adapter
 parameters:
+  mode: nonlinear
+  # Finite-frequency full Green backgrounds avoid WKB caustic amplitudes.
+  # This is distorted Born, not a claim of upstream r-Wave ray-shooting parity.
+  green_backend: volume_integral
+  green_solver_rtol: 1.0e-7
+  green_solver_maxiter: 20
+  max_cache_bytes: 536870912
   outer_iterations: 3
   inner_iterations: 20
   step_length: 1.0
   regularization: laplacian
-  regularization_lambda: 1.0e-5
-  smooth_sigma: 0.35
+  regularization_lambda: 0.2
+  regularization_scaling: relative_jacobian_diagonal
+  allow_underresolved: false
+  smooth_sigma: 1.0
+  max_update_mps: 12.0
+  max_backtracks: 10
+  assume_unit_source: false
+  use_feature_weights: false
   reference_sound_speed_mps: 1500.0
   sound_speed_bounds_mps: [1300.0, 1700.0]
   roi_update_only: true

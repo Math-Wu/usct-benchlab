@@ -11,10 +11,8 @@ algorithms:
     config: configs/algorithms/sart.yaml
   - name: bent_ray_gn
     config: configs/algorithms/bent_ray.yaml
-  - name: rwave_adapter
-    config: configs/algorithms/rwave.yaml
 min_cases: 1
-min_records: 5
+min_records: 4
 expected_statuses: [success]
 required_metrics:
   default: [rmse, ssim, data_relative_residual]

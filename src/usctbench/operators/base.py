@@ -28,6 +28,7 @@ class LinearOperator(Protocol):
 class Linearization:
     value: np.ndarray
     jacobian: LinearOperator
+    derivative_kind: str = "exact_discrete"
 
 
 def adjoint_error(

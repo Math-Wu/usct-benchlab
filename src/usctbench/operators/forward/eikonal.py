@@ -45,18 +45,21 @@ class MarchingTape:
     local_derivative: np.ndarray
 
     def tangent(self, perturbation: np.ndarray) -> np.ndarray:
+        from usctbench.operators._marching import tangent_accumulate
+
         ds = np.asarray(perturbation, dtype=float).ravel()
-        result = np.zeros_like(self.times)
-        for node in self.order:
-            value = self.local_derivative[node] * ds[node]
-            for parent, weight in zip(self.parents[node], self.weights[node]):
-                if parent >= 0:
-                    value += weight * result[parent]
-            result[node] = value
-        return result
+        return tangent_accumulate(
+            self.order, self.parents, self.weights, self.local_derivative, ds
+        )
 
 
-def fast_march(slowness: np.ndarray, spacing: tuple[float, float], source: np.ndarray):
+def fast_march(
+    slowness: np.ndarray,
+    spacing: tuple[float, float],
+    source: np.ndarray,
+    *,
+    compiled=True,
+):
     """Causal first-order Godunov fast marching with off-grid source seeding.
 
     Four surrounding nodes receive local constant-slowness source values. Their
@@ -80,6 +83,13 @@ def fast_march(slowness: np.ndarray, spacing: tuple[float, float], source: np.nd
     weights = np.zeros((size, 2))
     local = np.zeros(size)
     seeds, _ = interpolation(model.shape, np.asarray(source).reshape(1, 2))
+    if compiled:
+        from usctbench.operators._marching import marching_arrays
+
+        arrays = marching_arrays(
+            model, h, np.asarray(source, dtype=float), np.unique(seeds)
+        )
+        return MarchingTape(*arrays)
     order = []
     for node in np.unique(seeds):
         coordinate = np.array(divmod(int(node), nx))

@@ -22,6 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+performance = ["numba>=0.61"]
 dev = [
   "pytest>=8.0",
   "ruff==0.16.6",
@@ -41,6 +42,9 @@ usct = "usctbench.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+usctbench = ["operators/forward/matlab/*.m"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

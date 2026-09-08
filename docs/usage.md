@@ -159,18 +159,20 @@ usct run bent_ray_gn \
   --out runs/single_bent_ray
 ```
 
-`bent_ray_gn` is a regularized bent-ray-style travel-time baseline.
+`bent_ray_gn` uses a nonlinear fast-marching Eikonal model and its discrete adjoint.
 
 ## Run rWave Adapter
 
 ```bash
 usct run rwave_adapter \
-  --case "$USCT_WORKSPACE/data/synthetic_demo/cases/synthetic_circular_sos.h5" \
+  --case "$USCT_WORKSPACE/data/physics/example/pressure_case.h5" \
   --config configs/algorithms/rwave.yaml \
   --out runs/single_rwave
 ```
 
-`rwave_adapter` is an rWave/ray-Born-inspired adapter baseline.
+`rwave_adapter` requires complex pressure plus source calibration or independent
+water pressure. See [physics validation](physics_validation.md) to generate and
+import a pressure pair. ToF-only cases are rejected explicitly.
 
 ## Run FWI Adapter
 

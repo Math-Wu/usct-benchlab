@@ -7,6 +7,19 @@ from usctbench.operators import adjoint_error
 from usctbench.operators.forward.eikonal import EikonalForward, fast_march
 
 
+def test_compiled_marching_matches_reference_discretization():
+    from usctbench.operators.forward.eikonal import fast_march
+
+    rng = np.random.default_rng(18)
+    model = 1 / (1500 + rng.uniform(-30, 30, (21, 23)))
+    source = np.array([2.31, 3.17])
+    a = fast_march(model, (0.001, 0.0013), source, compiled=False)
+    b = fast_march(model, (0.001, 0.0013), source, compiled=True)
+    np.testing.assert_allclose(a.times, b.times, rtol=1e-13, atol=1e-18)
+    np.testing.assert_array_equal(a.parents, b.parents)
+    np.testing.assert_allclose(a.weights, b.weights, rtol=1e-12, atol=1e-14)
+
+
 def test_homogeneous_offgrid_water_and_exterior_geometry():
     grid = GridSpec(shape=(12, 15), spacing_m=(0.001, 0.0013), origin_m=(-0.006, -0.01))
     geometry = GeometrySpec(

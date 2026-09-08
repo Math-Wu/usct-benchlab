@@ -15,11 +15,13 @@ def _masked_values(
     truth = np.asarray(target, dtype=float)
     if pred.shape != truth.shape:
         raise ValueError("prediction and target must have the same shape")
-    finite = np.isfinite(pred) & np.isfinite(truth)
+    finite = np.isfinite(truth)
     if mask is not None:
         finite &= np.asarray(mask, dtype=bool)
     if not np.any(finite):
         raise ValueError("no finite pixels available for metric computation")
+    if not np.all(np.isfinite(pred[finite])):
+        raise FloatingPointError("nonfinite reconstruction inside the evaluation ROI")
     return pred[finite], truth[finite]
 
 
@@ -34,7 +36,7 @@ def compute_image_metrics(
 
     pred_image = np.asarray(prediction, dtype=float)
     truth_image = np.asarray(target, dtype=float)
-    finite_mask = np.isfinite(pred_image) & np.isfinite(truth_image)
+    finite_mask = np.isfinite(truth_image)
     if mask is not None:
         finite_mask &= np.asarray(mask, dtype=bool)
     pred, truth = _masked_values(pred_image, truth_image, finite_mask)
@@ -152,14 +154,20 @@ def _image_ssim(
         win_size -= 1
     if win_size < 3:
         return _global_ssim(pred[valid], truth[valid], data_range=data_range)
-    return float(
-        structural_similarity(
-            truth_crop,
-            pred_crop,
-            data_range=float(data_range) if data_range > 0 else 1.0,
-            win_size=win_size,
-        )
+    _, similarity_map = structural_similarity(
+        truth_crop,
+        pred_crop,
+        data_range=float(data_range) if data_range > 0 else 1.0,
+        win_size=win_size,
+        full=True,
     )
+    # Exclude padded background and incomplete windows from the ROI score.
+    from scipy.ndimage import binary_erosion
+
+    interior = binary_erosion(valid_crop, structure=np.ones((win_size, win_size)))
+    if not np.any(interior):
+        return _global_ssim(pred[valid], truth[valid], data_range=data_range)
+    return float(np.mean(similarity_map[interior]))
 
 
 def residual_metrics(

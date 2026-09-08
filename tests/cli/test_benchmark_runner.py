@@ -7,6 +7,23 @@ from usctbench.cli import register_builtin_algorithms
 from usctbench.core.io import write_case_hdf5
 
 
+def test_line_search_failure_is_not_a_passing_benchmark():
+    from usctbench.benchmark.runner import _assess_record
+
+    passed, _, failures = _assess_record(
+        {
+            "status": "success",
+            "algorithm": "rwave_adapter",
+            "stop_reason": "line_search_failed",
+            "stopping": {"termination_category": "failure"},
+        },
+        {},
+        [],
+    )
+    assert not passed
+    assert any("unsuccessfully" in reason for reason in failures)
+
+
 def test_run_algorithm_case_writes_standard_artifacts(synthetic_case, tmp_path):
     register_builtin_algorithms()
     case_path = tmp_path / "case.h5"

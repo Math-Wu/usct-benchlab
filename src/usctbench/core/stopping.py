@@ -123,12 +123,16 @@ class WorkLedger:
     def elapsed_s(self):
         return max(0.0, float(self.clock() - self.started))
 
-    def call(self, kind, function, *args, **kwargs):
+    def check_time(self):
+        """Cooperative deadline check for source/GMRES loops, without a call count."""
         if (
             self.policy.max_elapsed_s is not None
             and self.elapsed_s >= self.policy.max_elapsed_s
         ):
             raise BudgetExhausted("time_budget")
+
+    def call(self, kind, function, *args, **kwargs):
+        self.check_time()
         counter = "adjoint_calls" if kind == "adjoint" else "forward_calls"
         limit = getattr(self.policy, f"max_{counter}")
         if limit is not None and self.counts[counter] >= limit:

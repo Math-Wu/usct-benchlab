@@ -118,12 +118,14 @@ Helmholtz solver 预测出来的压力。
 | CGLS | 参考介质中的固定直射线；到时差在线性慢度扰动上近似。 | 对 $A\delta u\approx b$ 做加权正则化最小二乘 Krylov 求解。 | 快速、可复现的声速 baseline 和回归测试。 |
 | SIRT | 与 CGLS 相同的直射线代数模型，但用同步归一化残差反投影更新。 | 通过 relaxation 和 smoothing 迭代降低 $A\delta u\approx b$ 的加权残差。 | 更重视稳定性的迭代 baseline。 |
 | SART | 相同直射线模型，用发射器或射线子集做有序更新。 | 子集 row-action 更新。 | 早期收敛更快，但对排序和 relaxation 更敏感。 |
-| Bent-ray | 高频 travel time 满足 eikonal 近似；射线路径随声速或慢度变化。 | 基于 $T_s(r;c)$ 的正则化非线性 travel-time mismatch。 | 无法使用完整波形反演时的折射感知 surrogate 对比。 |
+| Bent-ray | 高频 travel time 满足 eikonal 近似；射线路径随声速或慢度变化。 | 基于 $T_s(r;c)$ 的正则化非线性 travel-time mismatch。 | Fast-marching 折射走时反演，不描述衍射和多次到达。 |
 | FWI | 完整声学波或 Helmholtz 传播；数据是波形或复数压力。 | 对声源、接收器和频率上的 PDE-constrained waveform mismatch 做优化。 | 有外部 k-Wave/FWI artifact 或外部 FWI 命令时的高保真汇报。 |
 
-`bent_ray_gn` 是一个正则化的 bent-ray 风格 travel-time baseline，不是完整外部
-eikonal solver。`rwave_adapter` 是 ray-Born-inspired adapter baseline，并不
-声称完整复现外部 complex rWave solver。FWI 路线在本仓库中作为高保真外部
+`bent_ray_gn` 现在使用真正的 Eikonal/fast-marching 非线性前向及离散伴随；
+`rwave_adapter` 使用复压力与随迭代更新的有限频率 Born 散射算子；配置默认通过
+自由空间体积分方程求解完整 Green 背景，Eikonal/WKB 近似保留为显式选项。
+两者不再依赖直线投影器。这些数值实现不声称完整复现
+上游 r-Wave 的所有功能，也不保证图像质量一定优于直线方法。FWI 路线作为高保真外部
 k-Wave/FWI 结果的适配器。更详细的数学说明见
 [docs/math_formulation.md](docs/math_formulation.md)。
 
@@ -135,8 +137,8 @@ k-Wave/FWI 结果的适配器。更详细的数学说明见
 | SIRT | `straight_sirt` | 同步迭代射线层析 | 带环形几何和 travel-time 测量的 `USCTCase` | 稳健的迭代声速 baseline | `configs/algorithms/sirt.yaml` |
 | SART | `straight_sart` | 有序/子集代数射线更新 | 带环形几何和 travel-time 测量的 `USCTCase` | 有序更新直射线 baseline | `configs/algorithms/sart.yaml` |
 | Attenuation SIRT | `attenuation_sirt` | 直射线 log-amplitude 层析 | 带 log-amplitude 测量的 `USCTCase` | 衰减成像 baseline | `configs/algorithms/attenuation.yaml` |
-| Bent-ray | `bent_ray_gn` | 正则化 bent-ray 风格 travel-time baseline | 带 travel-time 测量的 `USCTCase` | 折射风格对比方法 | `configs/algorithms/bent_ray.yaml` |
-| rWave adapter | `rwave_adapter` | ray-Born-inspired adapter baseline | 带 travel-time 测量的 `USCTCase` | 波动启发式对比方法 | `configs/algorithms/rwave.yaml` |
+| Bent-ray | `bent_ray_gn` | Eikonal / fast marching 非线性到时反演 | 首波到时或经过校准的到时差 | 折射校正 | `configs/algorithms/bent_ray.yaml` |
+| rWave adapter | `rwave_adapter` | 更新背景的有限频率 Ray-Born 散射 | 复压力以及源校准或独立水参考 | 散射敏感反演 | `configs/algorithms/rwave.yaml` |
 | FWI adapter | `fwi_kwave_adapter` | PDE 层面的 full-wave inversion adapter | `USCTCase` 加外部 k-Wave/FWI 结果或命令路径 | 高保真 FWI 结果汇报 | `configs/algorithms/fwi_kwave.yaml` |
 | Diffusion FWI adapter | `diffusion_fwi_kwave_adapter` | 外部 diffusion-prior k-Wave/FWI DPS adapter | `USCTCase` 加外部 DPS `.mat`/`.json` 结果或命令路径 | 用统一 benchmark 格式汇报 diffusion + FWI 结果 | `configs/algorithms/diffusion_fwi_kwave.yaml` |
 | Tiny FWI sanity | `fwi_tiny` | 小型 waveform-inversion sanity model | 小尺寸合成声速样本 | 本地 FWI 管线 sanity check | `configs/algorithms/fwi_tiny.yaml` |
@@ -334,10 +336,16 @@ rWave adapter：
 
 ```bash
 usct run rwave_adapter \
-  --case "$USCT_WORKSPACE/data/synthetic_demo/cases/synthetic_circular_sos.h5" \
+  --case "$USCT_WORKSPACE/data/physics/example/pressure_case.h5" \
   --config configs/algorithms/rwave.yaml \
   --out runs/single_rwave
 ```
+
+不能把由声速图投影得到的 ToF 当作 rWave 的复压力输入。压力生成和验证流程见
+[physics validation](docs/physics_validation.md)，算子按前向/伴随分组的接口见
+[operator contracts](docs/operator_contract.md)。无真值时使用独立接收点/频率留出；
+原生循环按残差、停滞、时间/算子调用预算等 OR 条件在线停止，并记录停止原因。
+默认外部 FWI 结果导入不能控制已经结束的 MATLAB 迭代，不会伪造其停止原因。
 
 FWI adapter：
 
@@ -519,6 +527,9 @@ runs/usctbench_runs/synthetic_demo_YYYYMMDDTHHMMSSZ/benchmark_report.md
 ## 示例结果
 
 OpenBreastUS 四类样本对比：
+
+下列两图属于此前主线的历史示例，不能代表本分支新 Eikonal / Ray-Born 实现的验收结果。
+当前独立波场测试见[八样本验证报告](docs/validation/2026-09-08_physics.md)。
 
 ![OpenBreastUS FWI and baseline comparison](docs/assets/openbreastus_readme_fwi_vs_surrogate.png)
 

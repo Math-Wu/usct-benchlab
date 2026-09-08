@@ -127,6 +127,20 @@ class KWaveFWIAdapterAlgorithm:
     name = "fwi_kwave_adapter"
 
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
+        if coerce_bool(config.parameters.get("controlled_operator", False)):
+            from usctbench.algorithms.fwi.controlled import run_controlled
+            from usctbench.algorithms.ray import run_with_failure_capture
+
+            return run_with_failure_capture(
+                self.name, case, lambda: run_controlled(case, config)
+            )
+        if config.parameters.get("stopping") or config.parameters.get("evaluation"):
+            return ReconstructionResult(
+                algorithm=self.name,
+                case_id=case.case_id,
+                status=ResultStatus.FAILED,
+                failure_reason="legacy external FWI artifacts/commands cannot enforce online stopping or held-out fitting; use controlled_operator with a compatible pressure case",
+            )
         result_path = _configured_path(config, "result_path")
         if result_path is None:
             return ReconstructionResult(
@@ -245,6 +259,13 @@ def _base_result_metrics(
     psnr_value = external.get("psnr_value")
     ssim_value = external.get("ssim_value")
     return {
+        "online_stopping": False,
+        "stop_reason": "external_stop_reason_unavailable",
+        "stopping": {
+            "online": False,
+            "reason": None,
+            "scope": "external_driver_not_instrumented",
+        },
         "external_result_loaded": True,
         "external_result_path": str(result_path),
         "external_dataset_path": external.get("dataset_path")
@@ -710,6 +731,12 @@ def _configured_iteration(
         return None, {"selection_mode": "final_unresolved_env"}
     mode = expanded.strip().lower()
     if mode in {"best", "best_rmse", "best_kwave_gt_rmse", "auto"}:
+        if not coerce_bool(
+            config.parameters.get("allow_ground_truth_selection", False)
+        ):
+            raise ValueError(
+                "GT-based FWI selection requires explicit allow_ground_truth_selection=true; use final or a predetermined iteration for truth-free evaluation"
+            )
         best_iteration, best_metrics = _best_iteration_by_rmse(external, case)
         if best_iteration is None:
             return None, {"selection_mode": f"{mode}_fallback_final", **best_metrics}

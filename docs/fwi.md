@@ -28,6 +28,11 @@ full-wave solver.
 
 ## Configure an Existing Result
 
+Artifact import defaults to the final iteration. GT-based `best` selection needs
+an explicit `allow_ground_truth_selection: true` and is not allowed for truth-free
+validation. This adapter cannot infer the production solver's actual stop reason
+from a final image and refuses `stopping` / `evaluation` settings it cannot enforce.
+
 Set:
 
 ```bash
@@ -65,6 +70,8 @@ to the external solver checkout. If `USCT_KWAVE_PYTHON_BIN` is unset, the
 adapter uses the current Python interpreter.
 
 ## Configure an Existing Diffusion + FWI Result
+
+This pre-existing optional adapter is unchanged by the physics-validation work.
 
 Set:
 

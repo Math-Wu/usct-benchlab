@@ -13,6 +13,13 @@ def regularizer(image, kind="identity"):
     if kind in {"laplacian", "roughness"}:
         a = np.pad(image, 1, mode="edge")
         return a[:-2, 1:-1] + a[2:, 1:-1] + a[1:-1, :-2] + a[1:-1, 2:] - 4 * image
+    if isinstance(kind, tuple) and len(kind) == 2:
+        # Dimensionless ell^2 * physical Laplacian; edge replication supplies
+        # zero-normal-flux boundaries and preserves a symmetric discrete map.
+        a = np.pad(image, 1, mode="edge")
+        return kind[0] * (a[:-2, 1:-1] + a[2:, 1:-1] - 2 * image) + kind[1] * (
+            a[1:-1, :-2] + a[1:-1, 2:] - 2 * image
+        )
     raise ValueError("regularization must be identity or laplacian")
 
 

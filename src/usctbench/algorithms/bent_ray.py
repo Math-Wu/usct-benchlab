@@ -65,7 +65,7 @@ class BentRayGNAdapter:
             raise ValueError("inner_iterations must be positive")
         kind = str(p.get("regularization", "laplacian"))
         damping = float(
-            p.get("damping", float(p.get("regularization_lambda", 3e-5)) ** 2)
+            p.get("damping", float(p.get("regularization_lambda", 2e-2)) ** 2)
         )
         step = float(p.get("step_length", 1.0))
         sigma = float(p.get("smooth_sigma", 0.0))
@@ -97,6 +97,16 @@ class BentRayGNAdapter:
             s = np.where(roi, s, s0)
         initial = s.copy()
         offset = distance / c0 if differential else np.zeros_like(distance)
+        initialization = str(p.get("initialization", "configured"))
+        if initialization not in {"configured", "cgls"}:
+            raise ValueError("initialization must be configured or cgls")
+        initialization_iterations = p.get("initialization_iterations", 80)
+        if (
+            isinstance(initialization_iterations, bool)
+            or not isinstance(initialization_iterations, (int, np.integer))
+            or initialization_iterations <= 0
+        ):
+            raise ValueError("initialization_iterations must be a positive integer")
 
         def objective(state, prediction):
             residual = np.where(
@@ -109,6 +119,30 @@ class BentRayGNAdapter:
             )
 
         try:
+            if initialization == "cgls":
+                from usctbench.operators.forward.straight_ray import (
+                    StraightRayProjector,
+                )
+
+                initializer = control.call(
+                    "initialization_setup", StraightRayProjector.from_case, case
+                )
+                water_prediction = (
+                    np.zeros_like(observed) if differential else distance / c0
+                )
+                seed_update = normal_step(
+                    initializer,
+                    control.weighted_residual(water_prediction),
+                    np.zeros_like(s),
+                    control,
+                    iterations=initialization_iterations,
+                    damping=damping,
+                    regularization=kind,
+                    roi=roi,
+                )
+                s = np.clip(s0 + seed_update, 1 / bounds[1], 1 / bounds[0])
+                if roi is not None:
+                    s = np.where(roi, s, s0)
             lin = control.call("forward", forward.linearize, s)
             prediction = lin.value.reshape(observed.shape) - offset
             cost = objective(s, prediction)
@@ -126,11 +160,13 @@ class BentRayGNAdapter:
                     regularization=kind,
                     roi=roi,
                 )
+                if sigma > 0:
+                    update = _gaussian_smooth(update, sigma)
+                if roi is not None:
+                    update = np.where(roi, update, 0)
                 accepted = False
                 for trial in range(10 if line_search else 1):
                     candidate = s + step * 0.5**trial * update
-                    if sigma > 0:
-                        candidate = s0 + _gaussian_smooth(candidate - s0, sigma)
                     candidate = np.clip(candidate, 1 / bounds[1], 1 / bounds[0])
                     if roi is not None:
                         candidate = np.where(roi, candidate, s0)
@@ -171,6 +207,12 @@ class BentRayGNAdapter:
                 "method_family": "first_arrival_eikonal",
                 "linearization_parameter": "slowness_s_per_m",
                 "inner_iterations": inner,
+                "initialization": initialization,
+                "initialization_training_only": initialization == "cgls",
+                "initialization_iterations": (
+                    initialization_iterations if initialization == "cgls" else 0
+                ),
+                "smoothing_applied_to": "update_direction_not_accumulated_image",
                 "regularization": kind,
                 "regularization_lambda_squared": damping,
                 "line_search": line_search,

@@ -1,0 +1,27 @@
+name: fwi_kwave_adapter
+parameters:
+  # Optional exact-discrete reference driver, not the production CUDA trajectory.
+  controlled_operator: true
+  functions_path: ${USCT_WUST_FUNCTIONS}
+  matlab_bin: ${USCT_MATLAB:-matlab}
+  reference_sound_speed_mps: 1500.0
+  sound_speed_bounds_mps: [1300.0, 1700.0]
+  pml_m: 0.009
+  pml_strength: 10.0
+  operator_timeout_s: 180
+  outer_iterations: 5
+  inner_iterations: 4
+  regularization: laplacian
+  regularization_lambda: 0.0
+  max_update_mps: 12.0
+  max_backtracks: 8
+  roi_update_only: true
+  assume_unit_source: false
+  evaluation:
+    receiver_fraction: 0.125
+    seed: 42
+  stopping:
+    max_elapsed_s: 600
+    target_relative_residual: 0.01
+    objective_patience: 3
+    validation_patience: 3

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from usctbench.operators._marching import reverse_accumulate
 
 
 def eikonal_adjoint(jacobian, data: np.ndarray) -> np.ndarray:
@@ -21,11 +22,8 @@ def eikonal_adjoint(jacobian, data: np.ndarray) -> np.ndarray:
             model.receiver_indices.ravel(),
             (receiver_values[:, None] * model.receiver_weights).ravel(),
         )
-        gradient = np.zeros(tape.times.size)
-        for node in tape.order[::-1]:
-            gradient[node] += sensitivity[node] * tape.local_derivative[node]
-            for parent, weight in zip(tape.parents[node], tape.weights[node]):
-                if parent >= 0:
-                    sensitivity[parent] += sensitivity[node] * weight
+        gradient = reverse_accumulate(
+            tape.order, tape.parents, tape.weights, tape.local_derivative, sensitivity
+        )
         result += gradient.reshape(model.shape)
     return result[model.crop].copy()

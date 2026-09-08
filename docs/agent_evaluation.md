@@ -60,11 +60,23 @@ API. Counts include evaluation and line-search calls, and must be accompanied by
 model-specific source-solve/subset counts. One CGLS step, one SART sweep, one
 Gauss-Newton outer step, and one external FWI iteration are **not** equivalent work.
 
-## Low-level validation checkpoint
+## Integration and evidence
 
-The initial API checkpoint passes 67 tests across the repository, including
-complex residuals, invalid predictions, zero norms, deterministic grouped masks,
-reciprocity exclusion, OR priority, budget enforcement, best-checkpoint recovery,
-and explicit oracle-only stopping. Algorithm-loop integration is documented in
-the subsequent implementation report; these APIs do not retroactively stop an
-already-completed external reconstruction artifact.
+CGLS, SIRT, SART, Eikonal, native Ray-Born and the opt-in controlled Helmholtz
+bridge call this monitor inside their loops. Completed checkpoints, not partially
+computed updates, are returned after budget exhaustion. Ray-Born setup and water
+calibration are also counted in current code. The production external FWI result
+adapter rejects unsupported online-control requests and marks its external stop
+reason unavailable. Importing a finished artifact never retroactively stops it.
+
+`evaluation.receiver`, `evaluation.frequency` and `evaluation.joint` contain
+disjoint holdout statistics. Full-pressure and contrast-pressure residuals are
+both retained for Ray-Born. Image metrics reject nonfinite reconstructions rather
+than hiding failed pixels. SSIM averages only windows fully inside the valid mask;
+PSNR uses the valid GT range. A missing ROI means the full image, not an inferred
+breast mask. A uniform returned image can have a moderate SSIM, so no single score
+is an acceptance certificate.
+
+See [the independent eight-case report](validation/2026-09-08_physics.md) for
+measured results and remaining limitations, including a validation-selected
+initial model. Holdouts used to stop/select are not an independent test set.

@@ -39,6 +39,7 @@ def test_water_scales_jacobian_not_just_background_and_needs_no_truth():
     case.ground_truth = GroundTruthSpec()
     cfg = AlgorithmConfig(
         parameters={
+            "mode": "fixed_background",
             "iterations": 4,
             "evaluation": {"receiver_indices": [1], "frequency_indices": [2]},
             "stopping": {

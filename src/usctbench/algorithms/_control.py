@@ -135,6 +135,12 @@ class InversionControl:
             "iterations": stop["completed_iterations"],
             "iteration_history": self.monitor.history,
             "evaluation_split": self.split.metadata,
+            "heldout_role": "validation_for_stopping_and_checkpoint_selection_not_untouched_test",
+            "roi_mask_provided": self.case.grid.roi_mask is not None,
+            "roi_update_restriction_active": bool(
+                coerce_bool(self.config.parameters.get("roi_update_only", False))
+                and self.case.grid.roi_mask is not None
+            ),
             "residual_curve": [row["residual_norm"] for row in self.monitor.history],
         }
         if prediction is not None:
