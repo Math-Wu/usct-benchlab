@@ -23,7 +23,9 @@ from usctbench.solvers.row_action import row_action
 
 
 def reconstruct(case, config, algorithm):
-    projector = StraightRayProjector.from_case(case)
+    projector = StraightRayProjector.from_case(
+        case, backend=config.parameters.get("projector_backend", "csr")
+    )
     target, mask = target_delta_tof(case, projector)
     weights = configured_ray_weights(case, projector, mask, config)
     p = config.parameters
@@ -137,6 +139,8 @@ def reconstruct(case, config, algorithm):
     metrics.update(
         {
             "backend": "native_siddon_straight_ray",
+            "projector_backend": projector.backend,
+            "projector_csr_storage_bytes": projector.storage_bytes,
             "roi_update_only": roi_only,
             "roi_laplacian": roi_laplacian,
             "coverage_preconditioning": use_preconditioning,

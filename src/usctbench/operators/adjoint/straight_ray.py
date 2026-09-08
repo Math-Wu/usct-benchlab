@@ -12,6 +12,8 @@ def backproject(projector, ray_values: np.ndarray) -> np.ndarray:
         raise ValueError(
             f"ray_values has {values.size} entries, expected {projector.n_rays}"
         )
+    if projector.backend == "csr":
+        return np.asarray(projector.matrix.T @ values).reshape(projector.grid.shape)
     flat = np.zeros(projector.n_pixels, dtype=float)
     for value, indices, lengths in zip(
         values, projector.indices_by_ray, projector.lengths_by_ray_m, strict=True
