@@ -1,0 +1,27 @@
+{
+  "scope": "Fresh CPU replay after runtime recovery; not historical test counts",
+  "recovered_source_commit": "fe6ffb2fa2ece5f45bd01ff6d6684260ba088701",
+  "recovered_source_tree": "c5580a170f8f627e9d8b57d5c0e8ae92378a0513",
+  "file_hashes_verified": 61,
+  "case_array_hashes_and_schemas_verified": 12,
+  "pytest_passed": 229,
+  "pytest_skipped_external_matlab": 2,
+  "high_D_stored_envelope_repicking_max_error_ns": 0.0,
+  "digital_water_shift_envelope_rms_error_ns": 0.08251525787999257,
+  "digital_shift_scope": "128 fixed channels, +250 ns digital translation; not a certificate of physical first arrivals",
+  "fixed_objective_lsmr": {
+    "matched_straight_iterations": 3101,
+    "matched_straight_tissue_rmse_mps": 23.285397412418984,
+    "kwave_iterations": 3214,
+    "kwave_tissue_rmse_mps": 27.057934179546987,
+    "stop_code_both": 2,
+    "speed_bounds_satisfied_both": true,
+    "gt_used_for_optimization": false,
+    "scope": "same fine-grid weighted CGLS objective and lambda=0.02; not an optimal prior or universal imaging ceiling"
+  },
+  "high_D_weighted_error_component_cosine": -0.6564292869100996,
+  "component_interpretation": "E_h-A and measured-ToF-minus-E_h partially cancel. The second includes observable, physical-model and discretization errors; not picker error alone.",
+  "checkpoint_is_not_final_campaign_completion": true,
+  "raw_data_uploaded_to_git": false,
+  "production_operators_changed": false
+}
