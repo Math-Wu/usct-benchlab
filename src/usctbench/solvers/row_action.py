@@ -24,6 +24,10 @@ def row_action(
     SART subsets use disjoint training rays. Normalization excludes held-out
     channels. An interrupted partial sweep returns the last *complete* sweep.
     Physical projection precedes residual evaluation and checkpoint selection.
+
+    SIRT's fixed-point objective has precision w_i / sum_j A_ij, not w_i.
+    For subset SART this global objective is only a monitor: inconsistent-data
+    limit cycles and postprocessing need not monotonically minimize it.
     """
     x = np.array(initial, dtype=float, copy=True)
     start = x.copy()
@@ -31,18 +35,51 @@ def row_action(
         raise ValueError("relaxation must be finite and in (0, 2)")
     if isinstance(subsets, bool) or int(subsets) != subsets or subsets <= 0:
         raise ValueError("subsets must be a positive integer")
+
+    def output():
+        selected, metrics = control.output(start)
+        metrics.update(
+            {
+                "objective_name": "row_normalized_weighted_least_squares",
+                "effective_objective_precision": "input_precision_divided_by_ray_row_sum",
+                "objective_role": (
+                    "SIRT_fixed_point_objective_before_optional_postprocessing"
+                    if subsets == 1
+                    else "SART_global_monitor_not_a_monotonic_minimization_guarantee"
+                ),
+                "data_residual_precision": "input_precision_without_row_normalization",
+            }
+        )
+        return selected, metrics
+
     try:
+        row_sum = operator.row_norms(power=1).reshape(control.observed.shape)
+        if not np.isfinite(row_sum).all() or np.any(row_sum < 0):
+            raise ValueError(
+                "row-action solver requires finite nonnegative ray lengths"
+            )
+        inverse_row_sum = np.divide(
+            1.0, row_sum, out=np.zeros_like(row_sum), where=row_sum > 0
+        )
+
+        def objective(prediction):
+            residual = np.where(
+                control.split.train, control.safe_observed - prediction, 0
+            )
+            return float(
+                0.5
+                * np.sum(control.precision * np.abs(residual) ** 2 * inverse_row_sum)
+            )
+
         prediction = control.call("forward", operator.forward, x).reshape(
             control.observed.shape
         )
-        if control.observe(0, x, prediction, sound_speed=to_image(x)):
-            return control.output(start)
+        if control.observe(
+            0, x, prediction, objective=objective(prediction), sound_speed=to_image(x)
+        ):
+            return output()
         ids = np.flatnonzero(control.split.train)
         groups = np.array_split(ids, min(int(subsets), len(ids)))
-        row_sum = np.maximum(
-            operator.row_norms(power=1).reshape(control.observed.shape),
-            np.finfo(float).tiny,
-        )
         normalization = []
         for group in groups:
             precision = np.zeros_like(control.precision)
@@ -61,7 +98,9 @@ def row_action(
                 )
                 update = (
                     control.call(
-                        "adjoint", operator.adjoint, precision * residual / row_sum
+                        "adjoint",
+                        operator.adjoint,
+                        precision * residual * inverse_row_sum,
                     )
                     / col
                 )
@@ -84,6 +123,7 @@ def row_action(
                 iteration,
                 x,
                 prediction,
+                objective=objective(prediction),
                 update_relative=relative_update,
                 sound_speed=to_image(x),
             ):
@@ -94,4 +134,4 @@ def row_action(
         control.monitor.finish(exc.reason)
     except FloatingPointError:
         control.monitor.finish("numerical_failure")
-    return control.output(start)
+    return output()

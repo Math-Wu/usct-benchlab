@@ -89,15 +89,35 @@ $\Delta t_{sr}$ values.
 
 ## Algebraic Reconstruction
 
-The straight-ray sound-speed algorithms solve weighted regularized systems:
+The quadratic CGLS path solves a weighted regularized system:
 
 $$
 \min_{\delta s}
 \|W(A\delta s-b)\|_2^2+\lambda^2R(\delta s).
 $$
 
-$W$ contains valid-ray masks and optional weights. $R$ is a regularizer such as
-damping or smoothness. After solving for $\delta s$, sound speed is recovered
+$W=\operatorname{diag}(\sqrt{w_i})$ contains the square roots of training-ray
+precision weights; excluded channels have zero precision. $R$ is the squared
+norm of the configured damping or smoothness operator. The optional Huber mode
+replaces the quadratic data loss with an explicitly recorded robust loss.
+
+SIRT and SART use the same ray matrix, but not generally the same minimization
+problem. Write $r_i=\sum_j A_{ij}$ and $C_{jj}=\sum_i w_iA_{ij}$. Without optional
+postprocessing, the simultaneous update is
+
+$$
+x_{k+1}=\Pi\left[x_k+\beta C^{-1}A^T
+\operatorname{diag}(w_i/r_i)(b-Ax_k)\right],\qquad x=\delta s.
+$$
+
+Its unprocessed fixed-point objective uses $w_i/r_i$ rather than $w_i$.
+SART applies corresponding subset updates; fixed relaxation can yield cycles
+on inconsistent data, so a complete sweep does not guarantee monotonic global
+least-squares descent. Image smoothing is an engineering regularization step,
+not the exact minimizer of the quadratic loss. Reported common data residuals
+retain input precision $w_i$, separately from the row-normalized objective monitor.
+
+After solving for $\delta s$, sound speed is recovered
 by
 
 $$

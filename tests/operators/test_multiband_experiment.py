@@ -10,6 +10,7 @@ import yaml
 from usctbench.algorithms._control import InversionControl
 from usctbench.core.schema import AlgorithmConfig
 from usctbench.operators.forward.band_delay import BandCorrelationDelay
+from usctbench.operators.model_space import BilinearBasis
 
 
 def load_experiment():
@@ -67,6 +68,61 @@ def test_direct_observed_correlation_chain_and_channel_locality():
     np.testing.assert_array_equal(
         lin.coefficient[:, :, :, :2], changed.coefficient[:, :, :, :2]
     )
+
+
+def test_reduced_nonlinear_full_chain_and_checkpoint(tmp_path):
+    from usctbench.core.schema import GridSpec, GeometrySpec, USCTCase, MeasurementSpec
+    from usctbench.operators.forward.ray_born import RayBornOperator, RayBornForward
+    from usctbench.operators.forward.band_delay import FiniteFrequencyTravelTimeForward
+
+    module = load_experiment()
+    grid = GridSpec(shape=(10, 10), spacing_m=(0.001, 0.001), origin_m=(-0.005, -0.005))
+    geom = GeometrySpec(
+        tx_pos_m=[[-0.008, 0], [0, -0.008]], rx_pos_m=[[0.008, 0], [0, 0.008]]
+    )
+    f = np.linspace(100e3, 300e3, 9)
+    water = RayBornOperator(grid, geom, f).background_data()
+    obs = BandCorrelationDelay(f, water, np.ones((1, len(f))), -3e-6, 3e-6)
+    fine = FiniteFrequencyTravelTimeForward(
+        RayBornForward(
+            grid, geom, f, green_backend="volume_integral", green_solver_rtol=1e-12
+        ),
+        obs,
+        water,
+    )
+    basis = BilinearBasis(grid, (4, 4))
+    reduced = module.CoefficientForward(fine, basis)
+    model = np.full(basis.shape, 1 / 1500**2)
+    model[1:3, 1:3] = 1 / 1480**2
+    lin = reduced.linearize(model)
+    np.testing.assert_allclose(lin.value, fine.forward(basis.forward(model)))
+    rng = np.random.default_rng(7)
+    dm = rng.normal(size=basis.shape) * 1e-9
+    h = 1e-2
+    fd = (reduced.forward(model + h * dm) - reduced.forward(model - h * dm)) / (2 * h)
+    np.testing.assert_allclose(lin.jacobian.forward(dm), fd, rtol=1e-4, atol=1e-15)
+    y = rng.normal(size=lin.value.shape)
+    np.testing.assert_allclose(
+        np.vdot(lin.jacobian.forward(dm), y).real,
+        np.vdot(dm, lin.jacobian.adjoint(y)).real,
+        rtol=1e-12,
+    )
+    assert reduced.grid.shape == (4, 4)
+    assert reduced.physics.grid.shape == (10, 10)
+    case = USCTCase(
+        case_id="coefficient_checkpoint",
+        grid=grid,
+        geometry=geom,
+        measurement=MeasurementSpec(domain="features", delta_tof_s=lin.value[0]),
+    )
+    control = module.ProgressControl(
+        case, AlgorithmConfig(), lin.value, default_iterations=2, out=tmp_path
+    )
+    control.basis = basis
+    control.observe(0, model, lin.value)
+    saved = np.load(tmp_path / "checkpoint.npz")
+    np.testing.assert_array_equal(saved["squared_slowness"], basis.forward(model))
+    np.testing.assert_array_equal(saved["coefficients"], model)
 
 
 def test_phase_initialization_ignores_validation_and_ground_truth(synthetic_case):

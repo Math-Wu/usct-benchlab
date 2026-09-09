@@ -388,7 +388,11 @@ def run_with_failure_capture(
         )
     result.runtime_s = time.perf_counter() - started
     reason = result.metrics.get("stop_reason")
-    if reason in {"numerical_failure", "linear_solver_breakdown"}:
+    if reason in {
+        "numerical_failure",
+        "linear_solver_breakdown",
+        "line_search_failed",
+    } or (result.metrics.get("stopping", {}).get("termination_category") == "failure"):
         # A finite last checkpoint is useful for diagnosis, not a successful solve.
         result.status = ResultStatus.FAILED
         result.failure_reason = f"Native inversion terminated with {reason}"

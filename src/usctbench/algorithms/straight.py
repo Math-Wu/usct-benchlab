@@ -35,6 +35,12 @@ def reconstruct(case, config, algorithm):
     weights = configured_ray_weights(case, projector, mask, config)
     p = config.parameters
     c0 = reference_sound_speed(case, config)
+    measurement_c0 = float(case.metadata.get("reference_sound_speed_mps", 1500.0))
+    if not np.isclose(c0, measurement_c0, rtol=1e-12, atol=0):
+        raise ValueError(
+            "reference_sound_speed_mps conflicts with the delta_tof_s measurement "
+            "reference; explicitly rebase the observations before changing the model reference"
+        )
     low, high = speed_bounds(config)
     if not low <= c0 <= high:
         raise ValueError("reference sound speed must lie within sound_speed_bounds_mps")
@@ -126,6 +132,7 @@ def reconstruct(case, config, algorithm):
                 float(p.get("huber_delta_s", 5e-7)) if robust_loss != "none" else None
             ),
             irls_stages=p.get("irls_iterations", 3) if robust_loss != "none" else 1,
+            optimality_rtol=float(p.get("gradient_rtol", 1e-10)),
         )
     else:
         sigma = float(p.get("smooth_sigma", 0))
@@ -172,8 +179,15 @@ def reconstruct(case, config, algorithm):
             "roi_laplacian": roi_laplacian,
             "coverage_preconditioning": use_preconditioning,
             "robust_loss": robust_loss,
+            "measurement_reference_sound_speed_mps": measurement_c0,
             "objective_name": (
-                "weighted_huber" if robust_loss != "none" else "weighted_least_squares"
+                (
+                    "weighted_huber"
+                    if robust_loss != "none"
+                    else "weighted_least_squares"
+                )
+                if is_cg
+                else "row_normalized_weighted_least_squares"
             ),
             "iterations_scope": "global across all subsets/IRLS stages",
             **ray_weight_metrics(weights, mask, config),

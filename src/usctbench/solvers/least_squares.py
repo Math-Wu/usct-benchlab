@@ -60,32 +60,64 @@ def normal_step(
     rhs = np.where(
         active, rhs - damping * normal_regularizer(current, regularization), 0.0
     )
+    if not np.isfinite(rhs).all():
+        raise FloatingPointError("nonfinite normal-system right-hand side")
     solution = np.zeros_like(current)
     direction = rhs.copy()
     rr = float(np.vdot(rhs, rhs).real)
     initial_rr = rr
+
+    def normal_product(image):
+        projected = control.call("jacobian", jacobian.forward, image).reshape(
+            control.observed.shape
+        )
+        weighted = np.where(control.precision > 0, projected, 0) * control.precision
+        if not np.isfinite(weighted).all():
+            raise FloatingPointError("nonfinite training Jacobian product")
+        q = control.call("adjoint", jacobian.adjoint, weighted)
+        return np.where(
+            active, q + damping * normal_regularizer(image, regularization), 0.0
+        )
+
+    initial_rhs = rhs.copy()
+    completed = 0
     for _ in range(iterations):
         if rr <= max(np.finfo(float).tiny, initial_rr * 1e-14):
             break
-        projected = control.call("jacobian", jacobian.forward, direction).reshape(
-            control.observed.shape
-        )
-        q = control.call("adjoint", jacobian.adjoint, control.precision * projected)
-        q = np.where(
-            active, q + damping * normal_regularizer(direction, regularization), 0.0
-        )
+        q = normal_product(direction)
         denom = float(np.vdot(direction, q).real)
         if not np.isfinite(denom) or denom <= 0:
-            break
+            raise FloatingPointError("nonpositive or nonfinite normal-system curvature")
         alpha = rr / denom
         solution += alpha * direction
         rhs -= alpha * q
         next_rr = float(np.vdot(rhs, rhs).real)
+        if not np.isfinite(next_rr):
+            raise FloatingPointError("nonfinite normal-system residual")
         direction = rhs + (next_rr / rr) * direction
         rr = next_rr
+        completed += 1
         control.work.counts["inner_iterations"] = (
             control.work.counts.get("inner_iterations", 0) + 1
         )
+    # Recompute rather than reporting only the recursively updated CG residual.
+    # An iteration cap is not a certificate that the GN subproblem was solved.
+    true_residual = initial_rhs - normal_product(solution) if completed else initial_rhs
+    true_norm = float(np.linalg.norm(true_residual))
+    if not np.isfinite(true_norm):
+        raise FloatingPointError("nonfinite recomputed normal-system residual")
+    denominator = max(np.sqrt(initial_rr), np.finfo(float).tiny)
+    record = {
+        "method": "real_parameter_normal_cg",
+        "iterations": completed,
+        "iteration_limit": iterations,
+        "recursive_relative_residual": float(np.sqrt(rr) / denominator),
+        "true_relative_residual": true_norm / denominator,
+        "converged": bool(true_norm <= denominator * 1e-7),
+    }
+    if not hasattr(control, "inner_solver_history"):
+        control.inner_solver_history = []
+    control.inner_solver_history.append(record)
     return solution
 
 

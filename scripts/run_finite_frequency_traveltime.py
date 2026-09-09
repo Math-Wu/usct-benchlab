@@ -26,6 +26,8 @@ from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, Geometr
 from usctbench.data.validation_acquisition import read_validation_acquisition
 from usctbench.data.waveforms import _read_channels, pressure_spectrum
 from usctbench.metrics import compute_regional_image_metrics
+from usctbench.operators.base import Linearization
+from usctbench.operators.model_space import BilinearBasis, FineGridRegularizer
 from usctbench.operators.forward.band_delay import (
     BandCorrelationDelay,
     BandDelayLinearization,
@@ -33,6 +35,40 @@ from usctbench.operators.forward.band_delay import (
 )
 from usctbench.operators.forward.ray_born import RayBornForward, RayBornOperator
 from usctbench.solvers.nonlinear import nonlinear_least_squares
+
+
+class BasisJacobian:
+    def __init__(self, jacobian, basis):
+        self.jacobian, self.basis = jacobian, basis
+        self.grid = basis.grid
+
+    def forward(self, values):
+        return self.jacobian.forward(self.basis.forward(values))
+
+    def adjoint(self, values):
+        return self.basis.adjoint(self.jacobian.adjoint(values))
+
+
+class CoefficientForward:
+    """Fine wave propagation with fewer independent squared-slowness unknowns."""
+
+    def __init__(self, forward, basis):
+        self.physics, self.basis = forward, basis
+        self.grid = basis.grid
+
+    def linearize(self, coefficients):
+        lin = self.physics.linearize(self.basis.forward(coefficients))
+        return Linearization(
+            lin.value,
+            BasisJacobian(lin.jacobian, self.basis),
+            derivative_kind=lin.derivative_kind + "_bilinear_basis",
+        )
+
+    def forward(self, coefficients):
+        return self.linearize(coefficients).value
+
+    def __getattr__(self, name):
+        return getattr(self.physics, name)
 
 
 class ObservedCorrelationDelay:
@@ -127,6 +163,7 @@ class ProgressControl(InversionControl):
     def __init__(self, *args, out, **kwargs):
         super().__init__(*args, **kwargs)
         self.out = out
+        self.basis = None
 
     def observe(self, iteration, state, prediction, **kwargs):
         previous = len(self.monitor.history)
@@ -138,12 +175,19 @@ class ProgressControl(InversionControl):
                 json.dumps(self.monitor.history, indent=2)
             )
             partial = self.out / "checkpoint.partial.npz"
-            np.savez_compressed(partial, squared_slowness=state, prediction=prediction)
+            image = state if self.basis is None else self.basis.forward(state)
+            np.savez_compressed(
+                partial,
+                squared_slowness=image,
+                coefficients=state,
+                prediction=prediction,
+            )
             partial.replace(self.out / "checkpoint.npz")
         return reason
 
 
 def main():
+    executed_source = Path(__file__).read_bytes()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--acquisition", type=Path, required=True)
     parser.add_argument("--case", type=Path, required=True)
@@ -160,10 +204,29 @@ def main():
         help="spectral quadrature points; verify kernel convergence for each acquisition",
     )
     parser.add_argument("--outer-iterations", type=int, default=15)
+    parser.add_argument(
+        "--optimizer", choices=("backtracking_gn", "trf"), default="backtracking_gn"
+    )
+    parser.add_argument(
+        "--model-size",
+        type=int,
+        help="optional coefficient grid; propagation stays at case resolution",
+    )
     parser.add_argument("--inner-iterations", type=int, default=12)
+    parser.add_argument(
+        "--gradient-rtol",
+        type=float,
+        default=1e-8,
+        help="GN regularized gradient norm relative to its initial norm",
+    )
     parser.add_argument("--seconds", type=float, default=7200)
     parser.add_argument("--damping-ratio", type=float, default=0.02)
-    parser.add_argument("--smooth-sigma", type=float, default=0)
+    parser.add_argument(
+        "--smooth-sigma",
+        type=float,
+        default=0,
+        help="direction smoothing in propagation-grid pixels",
+    )
     parser.add_argument("--regularization-length-wavelengths", type=float, default=0)
     parser.add_argument(
         "--initialization", choices=("water", "phase_cgls"), default="water"
@@ -174,14 +237,34 @@ def main():
     parser.add_argument("--minimum-peak-gap", type=float, default=0.02)
     parser.add_argument("--audit-only", action="store_true")
     parser.add_argument(
+        "--solver-audit-checkpoint",
+        type=Path,
+        help="GT-free objective/normal-equation audit of a saved checkpoint",
+    )
+    parser.add_argument(
         "--kernel-only",
         action="store_true",
         help="water-background derivative quadrature audit; no reconstruction or GT",
     )
     parser.add_argument("--gpu", type=int, help="optional CuPy device; CPU by default")
     args = parser.parse_args()
-    if args.audit_only and args.kernel_only:
-        parser.error("audit-only and kernel-only are mutually exclusive")
+    if (
+        sum(
+            [
+                args.audit_only,
+                args.kernel_only,
+                args.solver_audit_checkpoint is not None,
+            ]
+        )
+        > 1
+    ):
+        parser.error(
+            "audit-only, kernel-only and solver-audit-checkpoint are mutually exclusive"
+        )
+    if args.model_size is not None and args.initialization != "water":
+        parser.error("model-size control currently requires water initialization")
+    if args.optimizer == "trf" and args.smooth_sigma:
+        parser.error("TRF uses the explicit penalty; set smooth-sigma to zero")
     repo = Path(__file__).resolve().parents[1]
     if args.out.resolve().is_relative_to(repo) or args.frequency_count < 9:
         parser.error("use external output and at least 9 frequencies")
@@ -201,8 +284,23 @@ def main():
     ):
         parser.error("invalid damping ratio or peak gap")
     args.out.mkdir(parents=True, exist_ok=False)
+    (args.out / "executed_experiment.py").write_bytes(executed_source)
+    helper_hash = None
+    if args.optimizer == "trf":
+        helper_source = (
+            Path(__file__).with_name("_finite_frequency_trf.py").read_bytes()
+        )
+        (args.out / "_finite_frequency_trf.py").write_bytes(helper_source)
+        helper_hash = hashlib.sha256(helper_source).hexdigest()
     acquisition = read_validation_acquisition(args.acquisition)
     case = read_case_hdf5(args.case)
+    if args.model_size is not None:
+        if args.model_size < 2 or args.model_size > min(case.grid.shape):
+            parser.error("model-size must be between 2 and the propagation size")
+        if case.grid.shape[0] != case.grid.shape[1]:
+            parser.error(
+                "this square coefficient-grid experiment requires a square case"
+            )
     if case.metadata.get("input_sha256") != acquisition.manifest["input_sha256"]:
         raise ValueError("case/acquisition identity mismatch")
     if not np.array_equal(
@@ -287,9 +385,8 @@ def main():
             k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()
         },
         "acquisition_input_sha256": acquisition.manifest["input_sha256"],
-        "experiment_script_sha256": hashlib.sha256(
-            Path(__file__).read_bytes()
-        ).hexdigest(),
+        "experiment_script_sha256": hashlib.sha256(executed_source).hexdigest(),
+        "trf_helper_sha256": helper_hash,
         "frequency_convention": "positive Fourier transform; time exp(-i omega t)",
         "frequencies_hz": frequencies.tolist(),
         "band_power_windows": bands.tolist(),
@@ -453,6 +550,14 @@ def main():
         args.regularization_length_wavelengths, frequencies[-1], case.grid.spacing_m
     )
     del water_lin
+    basis = (
+        None
+        if args.model_size is None
+        else BilinearBasis(case.grid, (args.model_size, args.model_size))
+    )
+    direction_sigma = args.smooth_sigma * (
+        1 if basis is None else basis.shape[0] / case.grid.shape[0]
+    )
     (args.out / "config.yaml").write_text(
         yaml.safe_dump(
             {
@@ -461,28 +566,78 @@ def main():
                 "damping_scaling": "four_training_only_rademacher_diagonal_probes",
                 "regularization": regularization,
                 "smooth_sigma": args.smooth_sigma,
+                "direction_sigma_coefficient_pixels": direction_sigma,
                 "initialization_qc": initialization_qc,
                 "regularization_reference": "initial_model",
+                "model_parameterization": None if basis is None else basis.metadata(),
             },
             sort_keys=False,
         )
     )
+    if basis is not None:
+        # Keep the SAME fine-grid penalty and diagonal damping scale. Only the
+        # admissible model subspace changes; no GT-derived support is supplied.
+        forward = CoefficientForward(forward, basis)
+        regularization = FineGridRegularizer(basis, regularization)
+        initial = np.full(basis.shape, 1 / 1500**2)
+        control.basis = basis
     print("inverting damping", damping, flush=True)
+    if args.solver_audit_checkpoint is not None:
+        from _inverse_solver_audit import audit_iterate
+
+        helper_source = (
+            Path(__file__).with_name("_inverse_solver_audit.py").read_bytes()
+        )
+        (args.out / "_inverse_solver_audit.py").write_bytes(helper_source)
+        checkpoint_source = args.solver_audit_checkpoint.read_bytes()
+        import io
+
+        with np.load(io.BytesIO(checkpoint_source)) as saved:
+            state = saved["squared_slowness" if basis is None else "coefficients"]
+        if state.shape != initial.shape:
+            raise ValueError("checkpoint shape does not match configured model space")
+        report = audit_iterate(
+            forward,
+            control,
+            state=state,
+            reference=initial,
+            bounds=bounds,
+            damping=damping,
+            regularization=regularization,
+            smooth_sigma=direction_sigma,
+            inner_iterations=args.inner_iterations,
+        )
+        report["checkpoint_sha256"] = hashlib.sha256(checkpoint_source).hexdigest()
+        report["audit_helper_sha256"] = hashlib.sha256(helper_source).hexdigest()
+        report["work"] = control.work.counts
+        (args.out / "solver_audit.json").write_text(json.dumps(report, indent=2))
+        print(json.dumps(report), flush=True)
+        return
     start = time.perf_counter()
-    selected, metrics = nonlinear_least_squares(
-        forward,
-        control,
+    solver_parameters = dict(
         initial=initial,
         bounds=bounds,
         inner_iterations=args.inner_iterations,
         damping=damping,
         regularization=regularization,
-        smooth_sigma=args.smooth_sigma,
-        max_update_mps=12,
-        max_backtracks=8,
     )
-    speed = 1 / np.sqrt(selected)
+    if args.optimizer == "trf":
+        from _finite_frequency_trf import solve_trust_region
+
+        selected, metrics = solve_trust_region(forward, control, **solver_parameters)
+    else:
+        selected, metrics = nonlinear_least_squares(
+            forward,
+            control,
+            **solver_parameters,
+            smooth_sigma=direction_sigma,
+            max_update_mps=12,
+            max_backtracks=8,
+            gradient_rtol=args.gradient_rtol,
+        )
+    speed = 1 / np.sqrt(selected if basis is None else basis.forward(selected))
     metrics["initialization_qc"] = initialization_qc
+    metrics["model_parameterization"] = None if basis is None else basis.metadata()
     metrics.update(
         compute_regional_image_metrics(
             speed, case.ground_truth.sound_speed_mps, water_speed_mps=1500

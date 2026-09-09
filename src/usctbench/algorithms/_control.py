@@ -143,6 +143,8 @@ class InversionControl:
             ),
             "residual_curve": [row["residual_norm"] for row in self.monitor.history],
         }
+        if getattr(self, "inner_solver_history", None):
+            metrics["inner_solver_history"] = self.inner_solver_history
         if prediction is not None:
             evaluation = self.split.evaluate(prediction, self.observed)
             metrics["evaluation"] = evaluation

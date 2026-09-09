@@ -119,6 +119,8 @@ def test_frequency_holdout_does_not_train_or_leak_reciprocal_receiver():
         case,
         AlgorithmConfig(
             parameters={
+                # Match the fixed-background Born generator in this split test.
+                "mode": "fixed_background",
                 "iterations": 4,
                 "evaluation": {"frequency_indices": [2], "receiver_indices": [1]},
             }
@@ -128,6 +130,27 @@ def test_frequency_holdout_does_not_train_or_leak_reciprocal_receiver():
     assert result.metrics["evaluation"]["frequency"]["num_samples"] > 0
     assert result.metrics["evaluation"]["joint"]["num_samples"] > 0
     assert result.metrics["evaluation_split"]["reciprocal_tx_excluded"] == [1]
+
+
+def test_approximate_wkb_failure_is_not_a_successful_inverse_solve():
+    result = RWaveAdapter().run(
+        small_case("born"),
+        AlgorithmConfig(
+            parameters={
+                "mode": "nonlinear",
+                "green_backend": "eikonal_wkb",
+                "iterations": 4,
+                "evaluation": {"frequency_indices": [2], "receiver_indices": [1]},
+            }
+        ),
+    )
+    assert (
+        result.metrics["derivative_kind"]
+        == "continuum_born_approximation_not_discrete_wkb_derivative"
+    )
+    assert result.metrics["stop_reason"] == "line_search_failed"
+    assert result.status == "failed"
+    assert result.metrics["recovered_checkpoint_only"]
 
 
 def test_bent_cgls_initialization_does_not_use_heldout_data():

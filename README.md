@@ -93,6 +93,12 @@ $$
 \min_{\delta u}\|W(A\delta u-b)\|_2^2+\lambda^2\|L\delta u\|_2^2.
 $$
 
+This is the quadratic CGLS objective, with $W_{ii}=\sqrt{w_i}$. The current
+SIRT row normalization instead induces weights $w_i/\sum_jA_{ij}$; subset SART
+can cycle on inconsistent data. Their shared forward model does not imply an
+identical objective or a monotonic global loss, especially with optional smoothing.
+See [the numerical solver audit](docs/validation/2026-09-09_inverse_solver_audit_CN.md).
+
 Bent-ray methods keep a high-frequency travel-time model in which paths depend
 on the current medium:
 

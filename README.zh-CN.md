@@ -81,6 +81,11 @@ $$
 \min_{\delta u}\|W(A\delta u-b)\|_2^2+\lambda^2\|L\delta u\|_2^2.
 $$
 
+上述二次目标对应 CGLS，其中 $W_{ii}=\sqrt{w_i}$。当前 SIRT 的行归一化
+实际引入 $w_i/\sum_jA_{ij}$ 权重；固定松弛系数的子集 SART 在不一致数据上还可能循环。
+共享前向模型不等于严格最小化同一个目标，可选图像平滑也不保证全局损失单调下降。
+详见[反演器数值审计](docs/validation/2026-09-09_inverse_solver_audit_CN.md)。
+
 Bent-ray 方法保留高频 travel-time 模型，路径会随当前介质变化：
 
 $$

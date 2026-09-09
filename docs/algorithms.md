@@ -21,6 +21,17 @@ is outside this physics validation. No learned model is trained or integrated.
 
 ## Native nonlinear methods
 
+Straight-ray delay cases must keep their recorded measurement reference speed;
+changing only `reference_sound_speed_mps` is rejected. Rebase the observations
+explicitly before changing that reference.
+
+The current SIRT update includes row-length normalization, so its unprocessed
+fixed-point objective uses precision `w_i / row_sum_i`, not CGLS's `w_i`.
+SART with multiple subsets can cycle on inconsistent data. Its recorded global
+objective is a monitor, not a guarantee of monotonic minimization. Reported data
+residuals continue to use the common input precision. See the
+[inverse-solver audit](validation/2026-09-09_inverse_solver_audit_CN.md) for independent references.
+
 Bent-ray solves the water-grid-bias-corrected Eikonal problem at the current
 slowness on each outer iteration. Its Jacobian and adjoint differentiate the
 accepted upwind stencil. This is refraction tomography, not a scattering model.
@@ -60,6 +71,7 @@ are OR conditions, and validation observations cannot enter an update.
 | --- | --- | --- |
 | `regularization_lambda` | finite float, >= 0 | Square root of the normal-equation penalty coefficient; not interchangeable across parameterizations |
 | `inner_iterations` | integer, > 0 | Truncated linear solve cap per nonlinear outer step |
+| CGLS `gradient_rtol` | finite float, >= 0, default 1e-10 | Relative active-set KKT tolerance for Huber/active-bound convergence; checkpoint-specific verification is recorded |
 | `step_length` | finite float, > 0 | Initial step scale before backtracking |
 | `smooth_sigma` | finite float, >= 0 | Update smoothing width in reconstruction pixels |
 | `sound_speed_bounds_mps` | two finite positive numbers, increasing | Feasible sound-speed interval |
@@ -82,7 +94,9 @@ are OR conditions, and validation observations cannot enter an update.
 | `allow_underresolved` | boolean, default false | Explicit override of inverse-grid minimum 4 pixels/wavelength; not suitable for quality claims |
 | `use_feature_weights` | boolean, default false | Opt into broadband ToF weights; disallowed with pressure-frequency holdout |
 | Ray-Born `max_update_mps` | finite float, > 0 | Per-accepted-step speed-change bound |
-| Ray-Born `max_backtracks` | integer, > 0 | Maximum trial steps per outer iteration |
+| Ray-Born `max_backtracks` | integer, > 0 | Maximum trials per direction proposal; guarded smoothing and projected-gradient fallbacks share the global work budget |
+| Ray-Born `gradient_rtol` | finite float, >= 0, default 1e-8 | Training regularized gradient norm relative to its initial norm; not a global optimum certificate |
+| Bent `gradient_rtol` | finite float, >= 0, default 1e-8 | Relative first-order check in the pixel or coefficient space; projected stationarity is recorded separately |
 | Ray-Born `assume_unit_source` | boolean, default false | Explicit opt-in for dimensionless synthetic unit-source data only |
 | `stopping.max_elapsed_s` | finite float, >= 0 | Wall-clock budget; native Green source/GMRES loops check cooperatively, external calls only between calls |
 
@@ -92,6 +106,9 @@ numbers across those models. A valid acquisition ROI must be supplied without
 ground truth in truth-free deployment; this breast-map validation uses the
 full image grid because no ROI was supplied. Setting `roi_update_only: true` alone
 does not create a tissue support mask.
+
+For native Bent, `line_search: false` disables repeated step halving, not the
+descent acceptance rule. Gradient fallback trials still obey the global budget.
 
 The optional phase seed estimates group delay, not an exact first arrival.
 Aliasing and multipath can remain after its fit-quality checks. Its held-out

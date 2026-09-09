@@ -390,6 +390,7 @@ class RWaveAdapter:
                 smooth_sigma=float(p.get("smooth_sigma", 0)),
                 max_update_mps=float(p.get("max_update_mps", 12)),
                 max_backtracks=p.get("max_backtracks", 10),
+                gradient_rtol=float(p.get("gradient_rtol", 1e-8)),
             )
             sound_speed = 1 / np.sqrt(state)
             metrics["initialization"] = initialization
