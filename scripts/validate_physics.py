@@ -23,7 +23,7 @@ from scipy.io import savemat
 from scipy.ndimage import map_coordinates
 
 from usctbench.core.io import read_case_hdf5, write_case_hdf5
-from usctbench.data.arrival import water_relative_delays
+from usctbench.data.arrival import arrival_observation_metadata, water_relative_delays
 from usctbench.data.waveforms import convert_kwave_pressure_mat
 from usctbench.benchmark.runner import load_algorithm_config, evaluate_run
 
@@ -205,6 +205,8 @@ def extract(args):
         pulse_duration_s=3 / record["source_frequency_hz"],
         picker=getattr(args, "tof_method", "xcorr"),
         envelope_fraction=getattr(args, "envelope_fraction", 0.1),
+        aic_envelope_fraction=getattr(args, "aic_envelope_fraction", 0.25),
+        aic_window_s=getattr(args, "aic_window_s", None),
     )
     # Direct-adjacent pairs do not cross the object and are most sensitive to
     # finite source support. The rule depends on geometry only, never on labels.
@@ -215,8 +217,8 @@ def extract(args):
     case.measurement.valid_mask &= geometry_valid
     case.measurement.delta_tof_s = np.where(valid, delta, np.nan)
     case.measurement.ray_weights = np.where(valid, weights, 0)
-    case.metadata["feature_source"] = qc["method"]
-    case.metadata["arrival_qc"] = qc
+    case.metadata.update(arrival_observation_metadata(qc))
+    case.metadata["arrival_qc"] = dict(qc)
     with h5py.File(out / "pressure.mat") as f:
         qc.update(
             {
@@ -244,6 +246,8 @@ def extract(args):
         and qc["used_pair_fraction"] >= 0.5
     )
     case.metadata["simulation_qc"] = dict(qc)
+    case.metadata["simulation_qc_passed"] = qc["passed"]
+    case.metadata["simulation_failed_qc"] = not qc["passed"]
     write_case_hdf5(case, path)
     qc_path = out / (
         "simulation_qc.json"
@@ -485,8 +489,16 @@ def main():
     p.add_argument("--kwave-path", required=True)
     p.add_argument("--device", type=int, default=0)
     p = sub.add_parser("extract")
-    p.add_argument("--tof-method", choices=["xcorr", "envelope"], default="xcorr")
+    p.add_argument(
+        "--tof-method", choices=["xcorr", "envelope", "aic"], default="xcorr"
+    )
     p.add_argument("--envelope-fraction", type=float, default=0.1)
+    p.add_argument("--aic-envelope-fraction", type=float, default=0.25)
+    p.add_argument(
+        "--aic-window-s",
+        type=float,
+        help="AIC window duration in seconds; default is source pulse duration",
+    )
     p.add_argument("--case-file", default="pressure_case.h5")
     p.add_argument("--out", required=True)
     p.add_argument("--image-size", type=int, default=48)

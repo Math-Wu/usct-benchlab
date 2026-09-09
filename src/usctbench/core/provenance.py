@@ -135,6 +135,7 @@ def case_measurement_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         "feature_channel": metadata.get("feature_channel", ""),
         "picker_method": metadata.get("picker_method", ""),
         "observable_definition": metadata.get("observable_definition", ""),
+        "tof_observation_contract": metadata.get("tof_observation_contract"),
         "water_reference_used": metadata.get("water_reference_used", ""),
         "uses_gt_generated_measurement": bool(uses_gt_generated),
         "uses_kwave_wavefield": bool(uses_kwave),

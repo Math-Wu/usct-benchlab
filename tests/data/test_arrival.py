@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from usctbench.data.phase_delay import phase_slope_delays
-from usctbench.data.arrival import water_relative_delays
+from usctbench.data.arrival import arrival_observation_metadata, water_relative_delays
+from usctbench.core.provenance import case_measurement_metadata
 from usctbench.metrics import compute_image_metrics
 
 
@@ -102,6 +103,7 @@ def test_envelope_onset_is_water_relative_and_amplitude_invariant(shift):
         {"envelope_fraction": 0},
         {"minimum_peak_snr": -1},
         {"pulse_duration_s": float("nan")},
+        {"source_onset_s": float("nan")},
     ],
 )
 def test_arrival_configuration_fails_explicitly(settings):
@@ -113,3 +115,76 @@ def test_arrival_configuration_fails_explicitly(settings):
             np.array([[0.01]]),
             **settings,
         )
+
+
+@pytest.mark.parametrize("picker", ["xcorr", "envelope", "aic"])
+def test_source_trigger_is_not_confused_with_recording_time_origin(picker):
+    t = np.arange(1800) * 5e-8
+    centre = 0.06 / 1500 + 3e-6
+
+    def pulse(shift):
+        return (
+            np.exp(-(((t - centre - shift) / 1e-6) ** 2))
+            * np.cos(2 * np.pi * 800e3 * (t - centre - shift))
+        )[:, None, None]
+
+    p, w = pulse(0.71e-6), pulse(0)
+    args = dict(picker=picker, pulse_duration_s=6e-6)
+    a, valid, weights, qc = water_relative_delays(p, w, t, np.array([[0.06]]), **args)
+    b, bv, bw, bqc = water_relative_delays(
+        p, w, t + 0.005, np.array([[0.06]]), source_onset_s=0.005, **args
+    )
+    np.testing.assert_array_equal(valid, bv)
+    np.testing.assert_allclose(a, b, atol=1e-15, rtol=0)
+    np.testing.assert_allclose(weights, bw)
+    metadata = arrival_observation_metadata(bqc)
+    restored = case_measurement_metadata(metadata)["tof_observation_contract"]
+    assert restored["geometric_first_arrival_certified"] is False
+    assert restored["source_onset_s"] == 0.005
+    assert restored["sign"] == "object_minus_water"
+    assert "not_inverse_noise_variance" in restored["weight_meaning"]
+    assert valid.all()
+
+
+def test_float32_water_identity_has_no_artificial_subsample_lag():
+    rng = np.random.default_rng(6)
+    t = np.arange(1400) * 1e-7
+    w = rng.normal(size=(1400, 2, 2)).astype(np.float32)
+    delay, valid, _, _ = water_relative_delays(w, w, t, np.full((2, 2), 0.06))
+    assert valid.all()
+    np.testing.assert_allclose(delay, 0, atol=1e-19)
+
+
+@pytest.mark.parametrize("shift", [-0.7e-6, 0.9e-6])
+def test_modified_aic_on_causal_shift_control_and_not_a_gt_oracle(shift):
+    time = np.arange(1600) * 5e-8
+    u = time - 0.06 / 1500
+
+    def trace(offset):
+        q = np.maximum(u - offset, 0)
+        return (
+            np.where(
+                u > offset,
+                np.sin(2 * np.pi * 500e3 * q)
+                * np.sin(np.pi * np.minimum(q / 6e-6, 1)) ** 2,
+                0,
+            )
+        )[:, None, None]
+
+    w = trace(0).astype(np.float32)
+    p = 0.2 * trace(shift).astype(np.float32)
+    delta, valid, _, qc = water_relative_delays(
+        p, w, time, np.array([[0.06]]), picker="aic", pulse_duration_s=6e-6
+    )
+    assert valid.all()
+    np.testing.assert_allclose(delta, shift, atol=2e-8, rtol=0)
+    assert qc["ground_truth_used"] is False
+    invalid = water_relative_delays(
+        np.zeros_like(p),
+        w,
+        time,
+        np.array([[0.06]]),
+        picker="aic",
+        pulse_duration_s=6e-6,
+    )
+    assert not invalid[1].any() and np.isnan(invalid[0]).all()

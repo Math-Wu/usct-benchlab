@@ -257,7 +257,7 @@ def convert_kwave_pressure_mat(
             "water_reference_used": reference is not None,
             "measurement_limitations": [
                 "Source strength, detector response and pressure units require acquisition-specific calibration.",
-                "No time window, arrival picker, gain normalization or 3D-to-2D correction was applied.",
+                "The pressure import itself applies no window, picker, gain normalization or 3D-to-2D correction; derived feature processing is recorded separately.",
                 "Raw attenuation labels are not imported without an explicit unit conversion.",
             ],
         },

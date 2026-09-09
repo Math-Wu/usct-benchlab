@@ -45,6 +45,12 @@ k-Wave pressure data, eight breast cases and image evidence are recorded in
 [validation/2026-09-08_physics.md](validation/2026-09-08_physics.md).
 These are numerical/software and phantom tests, not clinical validation.
 
+The [recorded-medium ToF adaptation audit (Chinese)](validation/2026-09-09_tof_adaptation_CN.md)
+compares original surrogate data with independently simulated k-Wave pressure,
+checks image/element identity against the actual simulation input, and separates
+finite-band picking from Eikonal discretization. It does not certify that these
+observables are interchangeable or that reconstruction quality has reached a limit.
+
 ## Ray-Born and full-wave continuation
 
 Native Born inversion relinearizes the background and line-searches on recomputed
