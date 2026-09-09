@@ -23,6 +23,8 @@ dependencies = [
 
 [project.optional-dependencies]
 performance = ["numba>=0.61"]
+cuda11 = ["cupy-cuda11x>=13.6,<14"]
+cuda12 = ["cupy-cuda12x>=13.6,<15"]
 dev = [
   "pytest>=8.0",
   "ruff==0.16.6",

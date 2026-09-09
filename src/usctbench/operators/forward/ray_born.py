@@ -102,9 +102,14 @@ class RayBornForward:
             self.eikonal_solves += operator.eikonal_solves
             self.green_solves += operator.green_solves
             self.green_matvecs += operator.green_matvecs
+        jacobian = operator
+        if operator.green_device is not None:
+            from usctbench.operators.forward.cuda_green import CudaBornJacobian
+
+            jacobian = CudaBornJacobian(operator, operator.green_device)
         return Linearization(
             value,
-            operator,
+            jacobian,
             derivative_kind=(
                 "discrete_volume_integral_born_derivative"
                 if operator.green_backend == "volume_integral"
@@ -140,7 +145,18 @@ class RayBornOperator:
         green_solver_rtol=1e-7,
         green_solver_maxiter=20,
         budget_check=None,
+        green_device=None,
     ):
+        if green_device is not None and (
+            isinstance(green_device, bool)
+            or not isinstance(green_device, (int, np.integer))
+            or green_device < 0
+            or green_backend != "volume_integral"
+        ):
+            raise ValueError(
+                "green_device requires a nonnegative GPU index and volume_integral"
+            )
+        self.green_device = green_device
         if green_backend not in {"eikonal_wkb", "volume_integral"}:
             raise ValueError("green_backend must be eikonal_wkb or volume_integral")
         if not np.isfinite(green_solver_rtol) or not 0 < green_solver_rtol < 1:
@@ -307,6 +323,7 @@ class RayBornOperator:
                 rtol=self.green_solver_rtol,
                 maxiter=self.green_solver_maxiter,
                 budget_check=self.budget_check,
+                device=self.green_device,
             )
             try:
                 green = solver.fields(green)

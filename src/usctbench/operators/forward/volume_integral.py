@@ -23,6 +23,7 @@ class VolumeIntegralGreen:
         rtol,
         maxiter,
         budget_check=None,
+        device=None,
     ):
         if not np.isfinite(rtol) or not 0 < rtol < 1:
             raise ValueError("green_solver_rtol must be between zero and one")
@@ -30,6 +31,7 @@ class VolumeIntegralGreen:
             raise ValueError("green_solver_maxiter must be a positive integer")
         self.grid, self.rtol, self.maxiter = grid, float(rtol), int(maxiter)
         self.budget_check = budget_check
+        self.device = device
         self.shape = tuple(grid.shape)
         self.fft_shape = tuple(next_fast_len(2 * n - 1) for n in self.shape)
         self.solves, self.matvecs, self.maximum_relative_residual = 0, 0, 0.0
@@ -78,6 +80,10 @@ class VolumeIntegralGreen:
 
     def fields(self, incident):
         incident = np.asarray(incident, dtype=complex)
+        if self.device is not None:
+            from usctbench.operators.forward.cuda_green import solve_fields
+
+            return solve_fields(self, incident, self.device)
         result = np.empty_like(incident)
         for index, rhs in enumerate(incident):
             value, info = gmres(

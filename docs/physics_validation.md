@@ -3,6 +3,9 @@
 See the [independent calibration and model-matching report](validation/2026-09-09_calibration_and_model_matching_CN.md)
 for measured timing accuracy, spatial-scale controls, second-order refinement,
 finite-frequency observation matching, and frozen reconstruction comparisons.
+The [multiband travel-time work log](validation/2026-09-09_multiband_traveltime_CN.md)
+documents the nonlinear observation/Jacobian, optional CUDA backend, and ongoing
+sampling/optimization checks. Forward agreement is not reconstruction acceptance.
 
 ## Scope and conventions
 
