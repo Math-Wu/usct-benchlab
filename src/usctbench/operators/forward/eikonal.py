@@ -3,8 +3,9 @@
 Solve |grad T| = s with positive, cell-centered slowness in s/m. The accepted
 upwind dependencies form a causal tape. Differentiating this *same discrete
 solve* gives the Jacobian; reverse accumulation gives its exact transpose.
-This is a first-order reference discretization, not a port of r-Wave's shooting
-implementation. See docs/physics_validation.md for the model and limitations.
+The default is first order; optional mixed second-order upwinding retains its
+own exact discrete derivative. Point-source singularities and interfaces can
+still reduce global convergence order. This is not r-Wave's shooting solver.
 """
 
 from __future__ import annotations
@@ -59,13 +60,20 @@ def fast_march(
     source: np.ndarray,
     *,
     compiled=True,
+    spatial_order=1,
 ):
-    """Causal first-order Godunov fast marching with off-grid source seeding.
+    """Causal first- or mixed second-order marching with off-grid source seeding.
 
     Four surrounding nodes receive local constant-slowness source values. Their
     analytic derivatives are retained. Source seeding and the grid error converge
     under refinement; no straight-ray projector is used anywhere in this solve.
     """
+    if (
+        isinstance(spatial_order, (bool, np.bool_))
+        or not isinstance(spatial_order, (int, np.integer))
+        or spatial_order not in (1, 2)
+    ):
+        raise ValueError("spatial_order must be 1 or 2")
     model = np.asarray(slowness, dtype=float)
     if model.ndim != 2 or min(model.shape) < 2:
         raise ValueError("fast marching requires a 2-D grid of at least 2 by 2")
@@ -83,11 +91,14 @@ def fast_march(
     weights = np.zeros((size, 2))
     local = np.zeros(size)
     seeds, _ = interpolation(model.shape, np.asarray(source).reshape(1, 2))
-    if compiled:
+    if compiled or spatial_order == 2:
         from usctbench.operators._marching import marching_arrays
 
-        arrays = marching_arrays(
-            model, h, np.asarray(source, dtype=float), np.unique(seeds)
+        march = marching_arrays
+        if not compiled:
+            march = getattr(march, "py_func", march)
+        arrays = march(
+            model, h, np.asarray(source, dtype=float), np.unique(seeds), spatial_order
         )
         return MarchingTape(*arrays)
     order = []
@@ -208,9 +219,17 @@ class EikonalForward:
         *,
         background_speed_mps: float = 1500.0,
         calibrate: bool = True,
+        spatial_order: int = 1,
     ):
         if not np.isfinite(background_speed_mps) or background_speed_mps <= 0:
             raise ValueError("background_speed_mps must be finite and positive")
+        if (
+            isinstance(spatial_order, (bool, np.bool_))
+            or not isinstance(spatial_order, (int, np.integer))
+            or spatial_order not in (1, 2)
+        ):
+            raise ValueError("spatial_order must be 1 or 2")
+        self.spatial_order = spatial_order
         positions = np.vstack((geometry.tx_pos_m, geometry.rx_pos_m))
         if not np.all(np.isfinite(positions)):
             raise ValueError("transducer positions must be finite")
@@ -254,7 +273,9 @@ class EikonalForward:
     def fields(self, slowness: np.ndarray) -> tuple[MarchingTape, ...]:
         extended = self.extend(slowness, background=self.background_slowness)
         return tuple(
-            fast_march(extended, self.grid.spacing_m, p)
+            fast_march(
+                extended, self.grid.spacing_m, p, spatial_order=self.spatial_order
+            )
             for p in self.source_coordinates
         )
 

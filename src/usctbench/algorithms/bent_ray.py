@@ -39,7 +39,12 @@ class BentRayGNAdapter:
         p = config.parameters
         c0 = reference_sound_speed(case, config)
         bounds = speed_bounds(config)
-        forward = EikonalForward(case.grid, case.geometry, background_speed_mps=c0)
+        forward = EikonalForward(
+            case.grid,
+            case.geometry,
+            background_speed_mps=c0,
+            spatial_order=p.get("eikonal_order", 1),
+        )
         distance = np.linalg.norm(
             case.geometry.tx_pos_m[:, None] - case.geometry.rx_pos_m[None, :], axis=-1
         )
@@ -251,6 +256,7 @@ class BentRayGNAdapter:
         metrics.update(
             {
                 "backend": "native_eikonal_fast_marching",
+                "eikonal_order": forward.spatial_order,
                 "model_parameterization": (
                     {"kind": "pixels"} if basis is None else basis.metadata()
                 ),

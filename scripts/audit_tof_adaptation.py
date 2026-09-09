@@ -42,16 +42,16 @@ def stats(values):
     }
 
 
-def numerical_delays(speed, grid, geometry):
+def numerical_delays(speed, grid, geometry, spatial_order=1):
     op = EikonalForward(grid, geometry)
     ext = op.extend(1 / speed, background=1 / 1500)
     water = np.full(op.shape, 1 / 1500)
     a, b = [], []
     for source in op.source_coordinates:
-        tape = fast_march(ext, grid.spacing_m, source)
+        tape = fast_march(ext, grid.spacing_m, source, spatial_order=spatial_order)
         a.append(op.sample_receivers(tape.times))
         del tape
-        tape = fast_march(water, grid.spacing_m, source)
+        tape = fast_march(water, grid.spacing_m, source, spatial_order=spatial_order)
         b.append(op.sample_receivers(tape.times))
         del tape
     distance = np.linalg.norm(
@@ -66,7 +66,8 @@ def main():
     parser.add_argument("--case", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--tx-count", type=int, default=8)
-    parser.add_argument("--refine", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--refine", type=int, choices=(1, 2, 4), default=2)
+    parser.add_argument("--eikonal-order", type=int, choices=(1, 2), default=1)
     args = parser.parse_args()
     if not 1 <= args.tx_count <= 64:
         parser.error("tx-count must be in [1,64]")
@@ -238,11 +239,14 @@ def main():
         op = StraightRayProjector.from_grid_geometry(grid, geometry)
         straight = op.forward(1 / speed - 1 / 1500).reshape(op.ray_shape)
         arrays[label + "_straight_s"] = straight
-        eikonal, water_error = numerical_delays(speed, grid, geometry)
+        eikonal, water_error = numerical_delays(
+            speed, grid, geometry, args.eikonal_order
+        )
         arrays[label + "_eikonal_s"] = eikonal
         arrays[label + "_water_error_s"] = water_error
         report["models"][label] = {
             "grid_shape": list(grid.shape),
+            "eikonal_order": args.eikonal_order,
             "elapsed_s": time.perf_counter() - start,
             "straight_vs_stored_ns": stats((straight - measured)[active] * 1e9),
             "eikonal_vs_stored_ns": stats((eikonal - measured)[active] * 1e9),
@@ -260,32 +264,42 @@ def main():
         ]
         * 1e9
     )
-    if args.refine == 2:
+    previous = arrays["exact_simulation_grid_eikonal_s"]
+    for factor in ((2, 4) if args.refine == 4 else (2,) if args.refine == 2 else ()):
         g = acquisition.grid
         # Preserve the EXACT original nodes and extent of the centre interpolant.
         # Re-centering to doubled pixel count would silently change that field.
         grid = GridSpec(
-            shape=tuple(2 * n - 1 for n in g.shape),
-            spacing_m=tuple(h / 2 for h in g.spacing_m),
-            origin_m=tuple(o + h / 4 for o, h in zip(g.origin_m, g.spacing_m)),
+            shape=tuple(factor * (n - 1) + 1 for n in g.shape),
+            spacing_m=tuple(h / factor for h in g.spacing_m),
+            origin_m=tuple(
+                o + h / 2 - h / (2 * factor) for o, h in zip(g.origin_m, g.spacing_m)
+            ),
         )
         speed = sample_speed(acquisition.speed_mps, g, grid)
         start = time.perf_counter()
-        refined, water_error = numerical_delays(speed, grid, geometry)
+        refined, water_error = numerical_delays(
+            speed, grid, geometry, args.eikonal_order
+        )
         arrays["refined_eikonal_s"] = refined
+        arrays[f"refined_{factor}_eikonal_s"] = refined
         report["refinement"] = {
             "grid_shape": list(grid.shape),
             "elapsed_s": time.perf_counter() - start,
             "original_nodes_preserved_max_mps": float(
-                np.max(np.abs(speed[::2, ::2] - acquisition.speed_mps))
+                np.max(np.abs(speed[::factor, ::factor] - acquisition.speed_mps))
             ),
-            "successive_delta_change_ns": stats(
-                (refined - arrays["exact_simulation_grid_eikonal_s"])[active] * 1e9
-            ),
+            "successive_delta_change_ns": stats((refined - previous)[active] * 1e9),
             "refined_vs_stored_ns": stats((refined - measured)[active] * 1e9),
             "raw_water_error_ns": stats(water_error[active] * 1e9),
             "continuum_convergence_certified": False,
         }
+        report.setdefault("refinements", []).append(
+            dict(report["refinement"], factor=factor)
+        )
+        previous = refined
+        save()
+        print("refinement", json.dumps(report["refinement"]), flush=True)
     save()
     render(arrays, args.out, case.case_id)
     print(json.dumps(report, indent=2), flush=True)

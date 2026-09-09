@@ -1,5 +1,9 @@
 # Physics operators and validation
 
+See the [independent calibration and model-matching report](validation/2026-09-09_calibration_and_model_matching_CN.md)
+for measured timing accuracy, spatial-scale controls, second-order refinement,
+finite-frequency observation matching, and frozen reconstruction comparisons.
+
 ## Scope and conventions
 
 Coordinates are `[y, x]` in meters. `GridSpec.origin_m` is the lower cell edge;
@@ -12,7 +16,10 @@ inverse reconstruction algorithm.
 
 `operators.forward.eikonal.EikonalForward` solves the first-arrival Eikonal
 problem `|grad T| = s`, where `s = 1/c` is absolute slowness in seconds/meter.
-It uses causal first-order Godunov fast marching, with anisotropic Cartesian
+It defaults to causal first-order Godunov fast marching. Optional `spatial_order=2`
+(`eikonal_order: 2` in Bent configuration) uses mixed second-order upwinding with
+its own four-parent tangent/adjoint tape; source/interface singularities still
+limit global accuracy. Both support anisotropic Cartesian
 spacing, off-grid source seeding, bilinear receiver sampling, and known-water
 padding for transducers outside the image domain. The calibrated forward map is
 `T_h(s) - T_h(s_water) + distance/c_water`; this removes the reference-medium
@@ -26,10 +33,12 @@ the active stencil; changes of the first-arrival branch can be nonsmooth.
 
 This is a numerically implemented first-arrival model, **not** a verbatim port
 of r-Wave's off-grid Heun shooting/ray-linking implementation. Its limitations
-include first-order grid error, first-arrival-only propagation, no multiple
+include grid discretization error, first-arrival-only propagation, no multiple
 arrivals and no diffraction. Install `.[performance]` for optional compiled
-marching/tangent/adjoint loops; regression tests compare the same discretization
-with the pure-Python reference, without fastmath or reduced precision.
+marching/tangent/adjoint loops; first-order regression tests compare the same
+discretization with the independent pure-Python reference, without fastmath or
+reduced precision. Second-order verification uses analytic cases, refinement,
+and directional-derivative/adjoint checks.
 
 ### Tests completed at the first implementation checkpoint
 

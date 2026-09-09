@@ -1,7 +1,8 @@
-"""Optional compiled loops for the same causal Godunov discretization.
+"""Optional compiled causal marching and derivative loops.
 
-No fastmath, reduced precision or different PDE scheme is used. The uncompiled
-functions remain executable for exact regression comparisons.
+First order preserves the reference scheme. The optional mixed second-order
+scheme stores four parents, including negative second-neighbor derivatives.
+No fastmath or reduced precision is used.
 """
 
 import heapq
@@ -17,9 +18,26 @@ except ImportError:
 
 @njit(cache=True)
 def update_node(
-    node, ny, nx, hy, hx, flat, accepted, times, parents, weights, local, heap
+    node,
+    ny,
+    nx,
+    hy,
+    hx,
+    flat,
+    accepted,
+    times,
+    parents,
+    weights,
+    local,
+    heap,
+    spatial_order=1,
 ):
     if accepted[node]:
+        return
+    if spatial_order == 2:
+        update_node_second(
+            node, ny, nx, hy, hx, flat, accepted, times, parents, weights, local, heap
+        )
         return
     y, x = node // nx, node % nx
     p0 = -1
@@ -63,13 +81,79 @@ def update_node(
 
 
 @njit(cache=True)
-def marching_arrays(model, spacing, source, seeds):
+def update_node_second(
+    node, ny, nx, hy, hx, flat, accepted, times, parents, weights, local, heap
+):
+    # Mixed first/second-order upwind derivatives. The effective neighbor is
+    # (4*T1-T2)/3 with step 2*h/3 only for accepted, monotone two-node stencils.
+    near = np.full(2, -1, np.int64)
+    far = np.full(2, -1, np.int64)
+    effective = np.full(2, np.inf)
+    steps = np.array([hy, hx])
+    for axis in range(2):
+        stride = nx if axis == 0 else 1
+        coordinate = node // nx if axis == 0 else node % nx
+        size = ny if axis == 0 else nx
+        for sign in (-1, 1):
+            if coordinate + sign < 0 or coordinate + sign >= size:
+                continue
+            p = node + sign * stride
+            if accepted[p] and (near[axis] < 0 or times[p] < times[near[axis]]):
+                near[axis] = p
+        p = near[axis]
+        if p < 0:
+            continue
+        effective[axis] = times[p]
+        sign = 1 if p > node else -1
+        if 0 <= coordinate + 2 * sign < size:
+            q = node + 2 * sign * stride
+            if accepted[q] and times[q] <= times[p]:
+                far[axis] = q
+                effective[axis] = (4 * times[p] - times[q]) / 3
+                steps[axis] *= 2 / 3
+    first = 0 if effective[0] <= effective[1] else 1
+    second = 1 - first
+    if near[first] < 0:
+        return
+    a = effective[first]
+    value = a + steps[first] * flat[node]
+    both = near[second] >= 0 and value > effective[second]
+    if both:
+        wa, wb = 1 / steps[first] ** 2, 1 / steps[second] ** 2
+        diff = effective[second] - a
+        disc = (wa + wb) * flat[node] ** 2 - wa * wb * diff**2
+        value = a + (wb * diff + np.sqrt(max(0.0, disc))) / (wa + wb)
+    if value >= times[node]:
+        return
+    times[node] = value
+    parents[node, :] = -1
+    weights[node, :] = 0
+    denominator = (value - a) / steps[first] ** 2
+    if both:
+        denominator += (value - effective[second]) / steps[second] ** 2
+    local[node] = flat[node] / denominator
+    for axis in range(2):
+        if axis != first and not both:
+            continue
+        sensitivity = (value - effective[axis]) / steps[axis] ** 2 / denominator
+        parents[node, 2 * axis] = near[axis]
+        weights[node, 2 * axis] = sensitivity
+        if far[axis] >= 0:
+            parents[node, 2 * axis + 1] = far[axis]
+            weights[node, 2 * axis] *= 4 / 3
+            weights[node, 2 * axis + 1] = -sensitivity / 3
+    heapq.heappush(heap, (value, node))
+
+
+@njit(cache=True)
+def marching_arrays(model, spacing, source, seeds, spatial_order=1):
     ny, nx = model.shape
     flat = model.ravel()
     times = np.full(flat.size, np.inf)
     accepted = np.zeros(flat.size, np.bool_)
-    parents = np.full((flat.size, 2), -1, np.int64)
-    weights = np.zeros((flat.size, 2))
+    width = 2 * spatial_order
+    parents = np.full((flat.size, width), -1, np.int64)
+    weights = np.zeros((flat.size, width))
     local = np.zeros(flat.size)
     order = np.empty(flat.size, np.int64)
     seed_order = []
@@ -109,6 +193,7 @@ def marching_arrays(model, spacing, source, seeds):
                 weights,
                 local,
                 heap,
+                spatial_order,
             )
     while heap:
         value, node = heapq.heappop(heap)
@@ -137,6 +222,7 @@ def marching_arrays(model, spacing, source, seeds):
                 weights,
                 local,
                 heap,
+                spatial_order,
             )
     if count != flat.size:
         raise RuntimeError("fast marching did not reach all nodes")
@@ -184,7 +270,7 @@ def tangent_accumulate(order, parents, weights, local, perturbation):
     result = np.zeros(local.size)
     for node in order:
         value = local[node] * perturbation[node]
-        for k in range(2):
+        for k in range(parents.shape[1]):
             parent = parents[node, k]
             if parent >= 0:
                 value += weights[node, k] * result[parent]
@@ -199,7 +285,7 @@ def reverse_accumulate(order, parents, weights, local, values):
     for i in range(len(order) - 1, -1, -1):
         node = order[i]
         gradient[node] += sensitivity[node] * local[node]
-        for k in range(2):
+        for k in range(parents.shape[1]):
             parent = parents[node, k]
             if parent >= 0:
                 sensitivity[parent] += sensitivity[node] * weights[node, k]
