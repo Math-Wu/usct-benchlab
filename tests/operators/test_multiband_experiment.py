@@ -285,6 +285,7 @@ def test_reduced_nonlinear_full_chain_and_checkpoint(tmp_path):
     control.basis = basis
     control.observe(0, model, lin.value)
     saved = np.load(tmp_path / "checkpoint.npz")
+    assert int(saved["iteration"]) == 0
     np.testing.assert_array_equal(saved["squared_slowness"], basis.forward(model))
     np.testing.assert_array_equal(saved["coefficients"], model)
 
@@ -419,6 +420,14 @@ def test_explicit_variants_and_unfinished_refusal(tmp_path, synthetic_case):
             out / "result.h5",
         )
         (out / "metrics.json").write_text(json.dumps(metrics))
+        (out / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "tx_parent_indices": list(range(128)),
+                    "rx_parent_indices": list(range(128)),
+                }
+            )
+        )
         other = tmp_path / f"outer_{sample}_unfinished"
         other.mkdir()
         np.savez(other / "checkpoint.npz", squared_slowness=1 / truth**2)
@@ -442,6 +451,8 @@ def test_explicit_variants_and_unfinished_refusal(tmp_path, synthetic_case):
     records = json.loads((tmp_path / "comparison.json").read_text())
     assert len(records) == 2
     assert all(row["variant"] == "LSMR64" for row in records)
+    assert all(row["final"] and row["n_tx"] == row["n_rx"] == 128 for row in records)
+    assert all(len(row["artifact_sha256"]) == 64 for row in records)
     assert (tmp_path / "comparison.png").stat().st_size > 1000
     unfinished = command + ["--variant", "Pending", "outer_{sample}_unfinished"]
     refused = subprocess.run(unfinished, env=env, capture_output=True, text=True)
@@ -452,4 +463,30 @@ def test_explicit_variants_and_unfinished_refusal(tmp_path, synthetic_case):
     )
     assert allowed.returncode == 0, allowed.stderr
     records = json.loads((tmp_path / "comparison.json").read_text())
-    assert records[1]["status"] == "Intermediate iteration 2, not final"
+    assert records[1]["status"] == "Intermediate checkpoint, iteration unverified"
+    assert records[1]["checkpoint_iteration"] is None
+    for sample in ("high_d", "low_ob"):
+        np.savez(
+            tmp_path / f"outer_{sample}_unfinished/checkpoint.npz",
+            squared_slowness=1 / truth**2,
+            iteration=1,
+        )
+    allowed = subprocess.run(
+        unfinished + ["--allow-checkpoint"], env=env, capture_output=True, text=True
+    )
+    assert allowed.returncode == 0, allowed.stderr
+    records = json.loads((tmp_path / "comparison.json").read_text())
+    assert records[1]["status"] == "Intermediate iteration 1, not final"
+    bad_metrics = {**metrics, "rmse": 123.0}
+    write_result_hdf5(
+        ReconstructionResult(
+            algorithm="test",
+            case_id=synthetic_case.case_id,
+            sound_speed_mps=truth,
+            metrics=bad_metrics,
+        ),
+        tmp_path / "outer_high_d_lsmr64/result.h5",
+    )
+    refused = subprocess.run(command, env=env, capture_output=True, text=True)
+    assert refused.returncode != 0
+    assert "recorded rmse disagrees" in refused.stderr

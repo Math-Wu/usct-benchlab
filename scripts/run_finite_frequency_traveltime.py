@@ -266,6 +266,7 @@ class ProgressControl(InversionControl):
             image = state if self.basis is None else self.basis.forward(state)
             np.savez_compressed(
                 partial,
+                iteration=iteration,
                 squared_slowness=image,
                 coefficients=state,
                 prediction=prediction,

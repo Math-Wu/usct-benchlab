@@ -2,6 +2,8 @@
 """Render final results, or explicitly labelled intermediate checkpoints."""
 
 import argparse
+import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -14,6 +16,57 @@ import matplotlib.pyplot as plt
 
 from usctbench.core.io import read_case_hdf5
 from usctbench.metrics import compute_regional_image_metrics
+
+
+def load_run(out, truth, allow_checkpoint):
+    """Use a single image snapshot; never infer its iteration from a live log."""
+    final = (out / "result.h5").exists() and (out / "metrics.json").exists()
+    artifact = out / ("result.h5" if final else "checkpoint.npz")
+    if not final and not allow_checkpoint:
+        raise ValueError(f"unfinished run: {out}")
+    snapshot = artifact.read_bytes()
+    if final:
+        with h5py.File(io.BytesIO(snapshot)) as handle:
+            image = np.asarray(handle["sound_speed_mps"])
+            recorded = json.loads(handle.attrs["metrics_json"])
+        iteration = recorded.get("stopping", {}).get("selected_iteration")
+        status = f"Final: {recorded['stop_reason']}"
+    else:
+        with np.load(io.BytesIO(snapshot)) as checkpoint:
+            image = 1 / np.sqrt(checkpoint["squared_slowness"])
+            iteration = (
+                int(checkpoint["iteration"]) if "iteration" in checkpoint else None
+            )
+        recorded = {}
+        status = (
+            f"Intermediate iteration {iteration}, not final"
+            if iteration is not None
+            else "Intermediate checkpoint, iteration unverified"
+        )
+    if image.shape != truth.shape or not np.isfinite(image).all():
+        raise ValueError(f"invalid reconstructed image: {out}")
+    metrics = compute_regional_image_metrics(image, truth, water_speed_mps=1500)
+    for key in ("rmse", "psnr", "ssim"):
+        if final and not np.isclose(recorded[key], metrics[key], rtol=1e-8, atol=1e-10):
+            raise ValueError(f"recorded {key} disagrees with image/GT: {out}")
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    return image, {
+        "status": status,
+        "final": final,
+        "selected_iteration" if final else "checkpoint_iteration": iteration,
+        "artifact": artifact.name,
+        "artifact_sha256": hashlib.sha256(snapshot).hexdigest(),
+        "n_tx": len(manifest.get("tx_parent_indices", [])) or None,
+        "n_rx": len(manifest.get("rx_parent_indices", [])) or None,
+        "image_shape_yx": list(image.shape),
+        "acquisition_input_sha256": manifest.get("acquisition_input_sha256"),
+        "observable": manifest.get("observable"),
+        "elapsed_s": recorded.get("elapsed_s"),
+        "budget_elapsed_s": recorded.get("stopping", {}).get("elapsed_s"),
+        "evaluation": recorded.get("evaluation"),
+        **metrics,
+    }
 
 
 def main():
@@ -51,7 +104,9 @@ def main():
         if "{sample}" not in template:
             parser.error("each run template must contain {sample}")
     output = args.out or args.runs / f"multiband_comparison{args.suffix}.png"
-    plt.rcParams.update({"font.family": "DejaVu Serif", "font.size": 11})
+    plt.rcParams.update(
+        {"font.family": ["Times New Roman", "DejaVu Serif"], "font.size": 11}
+    )
     fig, axes = plt.subplots(
         2,
         1 + len(variants),
@@ -74,33 +129,24 @@ def main():
         ]
     ):
         truth = read_case_hdf5(args.handoff / path).ground_truth.sound_speed_mps
-        axes[row, 0].imshow(
+        displayed = axes[row, 0].imshow(
             truth, cmap="gray", origin="lower", vmin=truth.min(), vmax=truth.max()
         )
         axes[row, 0].set_ylabel(label, fontweight="bold")
         for col, (variant_label, template) in enumerate(variants, 1):
             out = args.runs / template.format(sample=name)
-            if (out / "result.h5").exists():
-                with h5py.File(out / "result.h5") as f:
-                    image = np.asarray(f["sound_speed_mps"])
-                metrics = json.loads((out / "metrics.json").read_text())
-                status = metrics["stop_reason"]
-            elif args.allow_checkpoint:
-                image = 1 / np.sqrt(np.load(out / "checkpoint.npz")["squared_slowness"])
-                metrics = compute_regional_image_metrics(image, truth)
-                iteration = json.loads((out / "progress.json").read_text())[-1][
-                    "iteration"
-                ]
-                status = f"Intermediate iteration {iteration}, not final"
-            else:
-                raise ValueError(f"unfinished run: {out}")
-            if image.shape != truth.shape or not np.isfinite(image).all():
-                raise ValueError(f"invalid reconstructed image: {out}")
+            image, record = load_run(out, truth, args.allow_checkpoint)
             axes[row, col].imshow(
                 image, cmap="gray", origin="lower", vmin=truth.min(), vmax=truth.max()
             )
+            counts = (
+                f"{record['n_tx']} TX x {record['n_rx']} RX"
+                if record["n_tx"] and record["n_rx"]
+                else "Channel count not recorded"
+            )
             axes[row, col].set_xlabel(
-                f"RMSE {metrics['rmse']:.2f} / PSNR {metrics['psnr']:.2f}\nSSIM {metrics['ssim']:.3f}\n{status}",
+                f"RMSE {record['rmse']:.2f} / PSNR {record['psnr']:.2f}\n"
+                f"SSIM {record['ssim']:.3f}\n{counts}\n{record['status']}",
                 fontsize=10,
                 fontweight="bold",
             )
@@ -109,10 +155,12 @@ def main():
                     "sample": name,
                     "variant": variant_label,
                     "run": out.name,
-                    "status": status,
-                    **{k: metrics[k] for k in ("rmse", "psnr", "ssim")},
+                    **record,
                 }
             )
+        fig.colorbar(
+            displayed, ax=axes[row].tolist(), fraction=0.02, pad=0.02, label="m/s"
+        )
     for row in axes:
         for ax in row:
             ax.set_xticks([])
@@ -120,7 +168,7 @@ def main():
     for ax, title in zip(axes[0], ["GT"] + [label for label, _ in variants]):
         ax.set_title(title, fontweight="bold")
     fig.suptitle(
-        "Finite-frequency traveltime / 64 TX x 64 RX / 256 x 256\nTissue-region metrics; common raw pressure and QC"
+        "Finite-frequency traveltime comparison\nTissue-region metrics; GT used only for evaluation"
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output, dpi=180)
