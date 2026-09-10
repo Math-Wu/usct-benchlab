@@ -157,6 +157,7 @@ def ring_pair_mask(distance, tx_indices, rx_indices, fraction=None, *, elements=
         return distance > distance.max() * 0.5
     if not np.isfinite(fraction) or not 0 <= fraction < 1:
         raise ValueError("excluded neighbor fraction must be in [0, 1)")
+    tx, rx = tx.astype(np.int64), rx.astype(np.int64)
     separation = np.abs(tx[:, None] - rx[None])
     separation = np.minimum(separation, elements - separation)
     return (separation > fraction * elements / 2) & (distance > 0)

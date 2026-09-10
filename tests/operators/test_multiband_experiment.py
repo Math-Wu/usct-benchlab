@@ -70,6 +70,9 @@ def test_ring_exclusion_uses_parent_indices_and_preserves_legacy_mask():
     assert np.all(~half | legacy) and np.all(~legacy | quarter)
     np.testing.assert_array_equal(quarter, quarter.T)
     np.testing.assert_array_equal(
+        mask(distance, ids.astype(np.uint8), ids.astype(np.uint8), 0.25), quarter
+    )
+    np.testing.assert_array_equal(
         mask(distance[::2], ids[::2], ids, 0.25), quarter[::2]
     )
     np.testing.assert_array_equal(
