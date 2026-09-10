@@ -263,10 +263,29 @@ def test_saved_iterate_audit_checks_complete_objective_gradient():
         damping=1e3,
         regularization=(0.5, 1.3),
         smooth_sigma=1,
+        gradient_steps=(1.0, 0.01, 0.001),
     )
     assert not report["ground_truth_used"]
     assert (
         max(x["relative_error"] for x in report["objective_gradient_differences"])
         < 1e-10
     )
+    assert report["gradient_fd_requested_steps"] == [1.0, 0.01, 0.001]
+    assert [r["step"] for r in report["objective_gradient_differences"]] == [
+        1.0,
+        0.01,
+        0.001,
+    ]
     assert all(x["inner"]["converged"] for x in report["normal_subproblems"])
+    for invalid in ([], [0.0], [-1.0], [np.nan], [[1.0]]):
+        with pytest.raises(ValueError, match="gradient steps"):
+            module.audit_iterate(
+                None,
+                None,
+                state=None,
+                reference=None,
+                bounds=None,
+                damping=None,
+                regularization=None,
+                gradient_steps=invalid,
+            )

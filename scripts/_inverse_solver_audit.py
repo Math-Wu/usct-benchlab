@@ -82,7 +82,16 @@ def audit_iterate(
     audit_methods=None,
     skip_gradient_fd=False,
     audit_caps=None,
+    gradient_steps=(1.0, 0.5, 0.25),
 ):
+    gradient_steps = np.asarray(gradient_steps, dtype=float)
+    if (
+        gradient_steps.ndim != 1
+        or not gradient_steps.size
+        or not np.isfinite(gradient_steps).all()
+        or np.any(gradient_steps <= 0)
+    ):
+        raise ValueError("gradient steps must be a nonempty positive finite sequence")
     lin = control.call("forward", forward.linearize, state)
     residual = control.weighted_residual(lin.value)
     gradient = -control.call("adjoint", lin.jacobian.adjoint, residual)
@@ -199,7 +208,8 @@ def audit_iterate(
         direction *= 0.002 / scale
         analytic = float(np.vdot(gradient, direction).real)
         tangent = control.call("jacobian", lin.jacobian.forward, direction)
-        for h in (1.0, 0.5, 0.25):
+        for h in gradient_steps:
+            h = float(h)
             plus = state + h * direction
             minus = state - h * direction
             p = control.call("gradient_fd", forward.linearize, plus).value
@@ -219,12 +229,17 @@ def audit_iterate(
                     ),
                 }
             )
+            print("completed objective-gradient audit", differences[-1], flush=True)
     return {
         "objective": value,
         "gradient_norm": float(np.linalg.norm(gradient)),
         "normal_subproblems": steps,
         "objective_gradient_differences": differences,
-        "gradient_fd_performed": not skip_gradient_fd,
+        "gradient_fd_performed": bool(differences),
+        "gradient_fd_requested_steps": gradient_steps.tolist(),
+        "gradient_fd_direction_max_relative_model_change": (
+            0.002 if differences else 0.0
+        ),
         "ground_truth_used": False,
         "reconstruction_performed": False,
         "scope": "saved_checkpoint_not_global_optimality_or_image_quality_certificate",

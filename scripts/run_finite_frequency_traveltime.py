@@ -280,6 +280,12 @@ def main():
     parser.add_argument("--inner-rtol", type=float, default=1e-3)
     parser.add_argument("--audit-inner-caps", nargs="+", type=int)
     parser.add_argument(
+        "--audit-gradient-steps",
+        nargs="+",
+        type=float,
+        help="saved-checkpoint audit: difference-step multipliers of a 0.002 relative model direction",
+    )
+    parser.add_argument(
         "--skip-gradient-fd",
         action="store_true",
         help="saved-checkpoint solver audit only; do not repeat nonlinear gradient FD",
@@ -359,6 +365,15 @@ def main():
     )
     parser.add_argument("--gpu", type=int, help="optional CuPy device; CPU by default")
     args = parser.parse_args()
+    if args.audit_gradient_steps is not None and (
+        args.solver_audit_checkpoint is None
+        or args.skip_gradient_fd
+        or not np.isfinite(args.audit_gradient_steps).all()
+        or np.any(np.asarray(args.audit_gradient_steps) <= 0)
+    ):
+        parser.error(
+            "audit-gradient-steps requires a checkpoint, enabled gradient FD and positive finite steps"
+        )
     damping_input = (
         args.damping_ratio if args.damping_absolute is None else args.damping_absolute
     )
@@ -820,6 +835,11 @@ def main():
             audit_methods=args.audit_inner_methods,
             skip_gradient_fd=args.skip_gradient_fd,
             audit_caps=args.audit_inner_caps,
+            gradient_steps=(
+                (1.0, 0.5, 0.25)
+                if args.audit_gradient_steps is None
+                else args.audit_gradient_steps
+            ),
             inner_options=dict(
                 rtol=args.inner_rtol,
                 atol=args.inner_atol,
