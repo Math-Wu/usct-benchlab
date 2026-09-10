@@ -295,6 +295,12 @@ def main():
     parser.add_argument(
         "--initialization", choices=("water", "phase_cgls"), default="water"
     )
+    parser.add_argument(
+        "--prior-reference",
+        choices=("initial", "water"),
+        default="initial",
+        help="spatial penalty anchor; water holds the prior fixed when changing initialization",
+    )
     parser.add_argument("--initialization-iterations", type=int, default=80)
     parser.add_argument("--initialization-lambda", type=float, default=0.02)
     parser.add_argument("--initialization-smooth-mm", type=float, default=3)
@@ -543,7 +549,7 @@ def main():
         default_iterations=args.outer_iterations,
         weights=weights,
         valid_mask=valid,
-        iteration_unit="finite-frequency traveltime GN outer step",
+        iteration_unit="finite-frequency traveltime accepted outer step",
         out=args.out,
     )
     reference = RayBornOperator(case.grid, case.geometry, frequencies).background_data()
@@ -642,7 +648,16 @@ def main():
         initial, initialization_qc = phase_initialization(
             case, measured, water, frequencies, distance, control, args
         )
-    np.savez_compressed(args.out / "initial_model.npz", squared_slowness=initial)
+    prior = (
+        initial.copy()
+        if args.prior_reference == "initial"
+        else np.full(case.grid.shape, 1 / 1500**2)
+    )
+    np.savez_compressed(
+        args.out / "initial_model.npz",
+        squared_slowness=initial,
+        prior_squared_slowness=prior,
+    )
     water_lin = control.call("initial_jacobian", forward.linearize, initial)
     rng = np.random.default_rng(42)
     diagonal = np.zeros(case.grid.shape)
@@ -696,7 +711,11 @@ def main():
                 "smooth_sigma": args.smooth_sigma,
                 "direction_sigma_coefficient_pixels": direction_sigma,
                 "initialization_qc": initialization_qc,
-                "regularization_reference": "initial_model",
+                "regularization_reference": (
+                    "initial_model"
+                    if args.prior_reference == "initial"
+                    else "water_1500_mps"
+                ),
                 "model_parameterization": None if basis is None else basis.metadata(),
             },
             sort_keys=False,
@@ -708,6 +727,7 @@ def main():
         forward = CoefficientForward(forward, basis)
         regularization = FineGridRegularizer(basis, regularization)
         initial = np.full(basis.shape, 1 / 1500**2)
+        prior = initial.copy()
         control.basis = basis
     print("inverting damping", damping, flush=True)
     if args.solver_audit_checkpoint is not None:
@@ -728,7 +748,7 @@ def main():
             forward,
             control,
             state=state,
-            reference=initial,
+            reference=prior,
             bounds=bounds,
             damping=damping,
             regularization=regularization,
@@ -754,6 +774,7 @@ def main():
     start = time.perf_counter()
     solver_parameters = dict(
         initial=initial,
+        prior_reference=None if args.prior_reference == "initial" else prior,
         bounds=bounds,
         inner_iterations=args.inner_iterations,
         damping=damping,

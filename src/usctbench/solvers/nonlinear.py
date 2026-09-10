@@ -16,6 +16,7 @@ def nonlinear_least_squares(
     *,
     initial,
     bounds,
+    prior_reference=None,
     inner_iterations=12,
     inner_solver="lsmr",
     inner_options=None,
@@ -37,6 +38,9 @@ def nonlinear_least_squares(
     ``step_length`` scales each raw proposal once, before box/speed projection.
     Backtracking fractions then shrink that initial feasible displacement;
     the first trial retains the original projection exactly.
+    ``prior_reference`` anchors the penalty independently of the starting point.
+    By default it is the initial model. Pixels outside ROI remain at the starting
+    model, even when the penalty reference differs.
     """
     for name, value in (
         ("inner_iterations", inner_iterations),
@@ -79,7 +83,18 @@ def nonlinear_least_squares(
     ):
         raise ValueError("invalid inner_solver or inner_options")
     state = np.asarray(initial, dtype=float).copy()
-    reference = state.copy()
+    initial_state = state.copy()
+    reference = state.copy() if prior_reference is None else np.asarray(prior_reference)
+    if prior_reference is not None and (
+        reference.shape != state.shape
+        or np.iscomplexobj(reference)
+        or not np.isfinite(reference).all()
+        or np.any(reference <= 0)
+    ):
+        raise ValueError(
+            "prior_reference must be a finite positive real model of the same shape"
+        )
+    reference = np.array(reference, dtype=float, copy=True)
     attempts = []
     direction_checks = []
     gradient_checks = []
@@ -221,7 +236,7 @@ def nonlinear_least_squares(
                 )
                 first_candidate = 1 / candidate_speed**2
                 if roi is not None:
-                    first_candidate = np.where(roi, first_candidate, reference)
+                    first_candidate = np.where(roi, first_candidate, initial_state)
                 initial_displacement = first_candidate - state
                 for backtrack in range(max_backtracks):
                     fraction = 0.5**backtrack
@@ -233,7 +248,7 @@ def nonlinear_least_squares(
                         else state + fraction * initial_displacement
                     )
                     if roi is not None:
-                        candidate = np.where(roi, candidate, reference)
+                        candidate = np.where(roi, candidate, initial_state)
                     displacement = candidate - state
                     slope = float(np.vdot(gradient, displacement).real)
                     row = {
@@ -299,7 +314,10 @@ def nonlinear_least_squares(
     control.work.counts["eikonal_source_solves"] = forward.eikonal_solves
     control.work.counts["green_source_solves"] = getattr(forward, "green_solves", 0)
     control.work.counts["green_matvecs"] = getattr(forward, "green_matvecs", 0)
-    selected, metrics = control.output(reference)
+    selected, metrics = control.output(initial_state)
+    metrics["prior_reference_source"] = (
+        "initial" if prior_reference is None else "explicit"
+    )
     metrics["line_search_history"] = attempts
     metrics["direction_checks"] = direction_checks
     metrics["gradient_checks"] = gradient_checks

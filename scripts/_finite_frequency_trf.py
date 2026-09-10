@@ -47,6 +47,7 @@ def solve_trust_region(
     *,
     initial,
     bounds,
+    prior_reference=None,
     damping,
     regularization,
     inner_iterations,
@@ -68,16 +69,29 @@ def solve_trust_region(
         or not 0 < bounds[0] < bounds[1]
     ):
         raise ValueError("bounds must be finite ordered positive speeds")
-    reference = np.array(initial, float, copy=True)
+    initial_state = np.array(initial, float, copy=True)
     if (
-        not np.isfinite(reference).all()
-        or np.any(reference < 1 / bounds[1] ** 2)
-        or np.any(reference > 1 / bounds[0] ** 2)
+        not np.isfinite(initial_state).all()
+        or np.any(initial_state < 1 / bounds[1] ** 2)
+        or np.any(initial_state > 1 / bounds[0] ** 2)
     ):
         raise ValueError(
             "initial squared slowness must be finite and within speed bounds"
         )
-    shape = reference.shape
+    reference = (
+        initial_state.copy() if prior_reference is None else np.asarray(prior_reference)
+    )
+    if (
+        reference.shape != initial_state.shape
+        or np.iscomplexobj(reference)
+        or not np.isfinite(reference).all()
+        or np.any(reference <= 0)
+    ):
+        raise ValueError(
+            "prior_reference must be a finite positive real model of the same shape"
+        )
+    reference = np.array(reference, dtype=float, copy=True)
+    shape = initial_state.shape
     model_scale, residual_scale = 1 / 1500**2, 1e6
     train = control.split.train
     root_weight = np.sqrt(control.precision[train])
@@ -97,7 +111,7 @@ def solve_trust_region(
         return float(np.sum(loss(residual**2)[0]) / (2 * residual_scale**2))
 
     cached_x = cached_lin = cached_residual = None
-    last_accepted = reference.copy()
+    last_accepted = initial_state.copy()
     result = None
     trial_failures = []
 
@@ -173,14 +187,14 @@ def solve_trust_region(
                 raise StopIteration
 
     try:
-        x0 = (reference / model_scale - 1).ravel()
+        x0 = (initial_state / model_scale - 1).ravel()
         lin, residual = evaluate(x0)
         control.observe(
             0,
-            reference,
+            initial_state,
             lin.value,
             objective=objective(residual),
-            sound_speed=1 / np.sqrt(reference),
+            sound_speed=1 / np.sqrt(initial_state),
         )
         if control.monitor.reason is None:
             result = least_squares(
@@ -222,7 +236,10 @@ def solve_trust_region(
             "green_matvecs": getattr(forward, "green_matvecs", 0),
         }
     )
-    selected, metrics = control.output(reference)
+    selected, metrics = control.output(initial_state)
+    metrics["prior_reference_source"] = (
+        "initial" if prior_reference is None else "explicit"
+    )
     metrics["optimizer"] = "scipy_trf_lsmr"
     metrics["optimizer_settings"] = {
         "inner_iteration_limit": inner_iterations,

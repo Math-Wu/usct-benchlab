@@ -140,6 +140,7 @@ def test_trf_budget_returns_atomic_fallback():
         DiagonalObservation(),
         control,
         initial=initial,
+        prior_reference=initial * 1.02,
         bounds=(1400, 1600),
         damping=0,
         regularization="laplacian",
@@ -150,7 +151,9 @@ def test_trf_budget_returns_atomic_fallback():
     assert metrics["optimizer_terminal"] is None
 
 
-def test_tv_trf_matches_independent_dense_objective_and_reports_actual_cost():
+def test_tv_trf_matches_independent_dense_objective_and_reports_actual_cost(
+    monkeypatch,
+):
     from usctbench.operators.model_space import SpatialGradient
 
     case, config, observed, _ = setup()
@@ -161,11 +164,20 @@ def test_tv_trf_matches_independent_dense_objective_and_reports_actual_cost():
     )
     control = InversionControl(case, config, observed, default_iterations=60)
     scale, epsilon, damping = 1 / 1500**2, 2 * 5 / 1500**3, 25.0
-    initial = np.full(case.grid.shape, scale)
+    prior = np.full(case.grid.shape, scale)
+    initial = scale * (1 + np.linspace(-0.02, 0.02, prior.size).reshape(prior.shape))
+    observe = control.observe
+
+    def check_observation(iteration, state, prediction, **kwargs):
+        np.testing.assert_allclose(kwargs["sound_speed"], 1 / np.sqrt(state))
+        return observe(iteration, state, prediction, **kwargs)
+
+    monkeypatch.setattr(control, "observe", check_observation)
     result, metrics = load_solver()(
         DiagonalObservation(),
         control,
         initial=initial,
+        prior_reference=prior,
         bounds=(1400, 1600),
         damping=damping,
         regularization=SpatialGradient(case.grid, 0.002),

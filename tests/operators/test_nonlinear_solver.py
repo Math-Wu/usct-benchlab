@@ -232,6 +232,38 @@ def _original_first_trial(initial, proposal, step_length, bounds, max_update, ro
     return candidate if roi is None else np.where(roi, candidate, initial)
 
 
+def test_separate_prior_matches_dense_solution_and_keeps_roi_exterior(solve):
+    initial = np.full((1, 4), 1 / 1500**2)
+    prior = initial + np.array([[-1.0, 2.0, -1.0, 1.0]]) * 1e-9
+    matrix = np.diag([300.0, 200, 100, 50])
+    observed = matrix @ np.array([2.0, -1.0, 1.0, 2.0]) * 1e-9
+    damping = 5000.0
+    roi = np.array([[True, True, False, False]])
+    state, metrics, _, _, _ = solve(
+        matrix,
+        observed,
+        initial=initial,
+        prior_reference=prior,
+        damping=damping,
+        roi=roi,
+    )
+    selected = matrix[:, roi.ravel()]
+    delta = np.linalg.solve(
+        selected.T @ selected + damping * np.eye(roi.sum()),
+        selected.T @ observed + damping * (prior - initial)[roi],
+    )
+    expected = initial.copy()
+    expected[roi] += delta
+    np.testing.assert_allclose(state, expected, rtol=1e-12)
+    np.testing.assert_array_equal(state[~roi], initial[~roi])
+    residual = matrix @ (state - initial).ravel() - observed
+    objective = 0.5 * (residual @ residual + damping * np.sum((state - prior) ** 2))
+    assert metrics["iteration_history"][-1]["objective"] == pytest.approx(
+        objective, rel=1e-12
+    )
+    assert metrics["prior_reference_source"] == "explicit"
+
+
 def _assert_displacement_trials(initial, states, rows, first, step_length):
     assert len(states) == len(rows) > 0
     np.testing.assert_array_equal(states[0], first)
