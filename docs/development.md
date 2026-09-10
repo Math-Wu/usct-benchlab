@@ -16,6 +16,21 @@ python -m compileall src tests
 pytest -q
 ```
 
+Tests are organized by behavior, not by experiment date. Keep independent
+forward/adjoint checks, dense solver references, real bug regressions, data-split
+isolation, stopping/budget behavior, and CLI/release contracts. Parameterize only
+when a case exercises a distinct code path or numerical failure mode; avoid full
+Cartesian products of methods, units, penalties, and invalid arguments when
+representative combinations cover the same contract. Do not replace removed
+parameter combinations with hidden loops merely to lower the displayed count.
+
+One-off sweeps, run launchers, copied source snapshots, and their logs belong in
+the external run workspace, not in `src/` or `tests/`. Preserve raw observations,
+final results, source identities, and confirmed failure evidence. Delete only
+regenerable caches or verified redundant/failed startup files; never clean an
+active run's source or checkpoints. Consolidate superseded progress notes into
+the final report instead of accumulating another archive tree.
+
 ## CLI Smoke
 
 ```bash

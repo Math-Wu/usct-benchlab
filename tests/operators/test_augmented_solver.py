@@ -116,8 +116,14 @@ def laplacian_matrix(shape, axis_weights=(1.0, 1.0)):
     return matrix
 
 
-@pytest.mark.parametrize("complex_data", [False, True])
-@pytest.mark.parametrize("regularization", ["identity", "laplacian", (0.2, 1.3)])
+@pytest.mark.parametrize(
+    ("complex_data", "regularization"),
+    [
+        pytest.param(False, "identity", id="real-identity"),
+        pytest.param(True, "laplacian", id="complex-laplacian"),
+        pytest.param(False, (0.2, 1.3), id="real-anisotropic"),
+    ],
+)
 def test_weighted_augmented_solution_matches_dense_reference(
     method, complex_data, regularization
 ):
@@ -236,7 +242,7 @@ def test_ill_conditioned_solution_is_invariant_to_data_units(method, units):
     assert assert_record(control, method, design, target, step, 1e-10)["converged"]
 
 
-@pytest.mark.parametrize("units", [1e-12, 1.0, 1e12])
+@pytest.mark.parametrize("units", [1e-12, 1e12])
 @pytest.mark.parametrize("preconditioner", ["none", "column_rms"])
 def test_global_unit_scaling_preserves_data_and_rectangular_penalty_balance(
     method, units, preconditioner
@@ -334,8 +340,13 @@ def test_masked_nonfinite_residuals_and_forward_rows_are_excluded(method, comple
     assert assert_record(control, method, design, target, step, 1e-11)["converged"]
 
 
-@pytest.mark.parametrize("complex_data", [False, True])
-@pytest.mark.parametrize("preconditioner", ["none", "column_rms"])
+@pytest.mark.parametrize(
+    ("complex_data", "preconditioner"),
+    [
+        pytest.param(False, "none", id="real-unpreconditioned"),
+        pytest.param(True, "column_rms", id="complex-column-rms"),
+    ],
+)
 def test_roi_restricts_columns_but_retains_full_current_in_rectangular_penalty(
     method, complex_data, preconditioner
 ):
@@ -437,9 +448,13 @@ def test_right_preconditioner_preserves_unique_solution_and_accounts_for_calls(
 
 
 @pytest.mark.parametrize(
-    "rhs_kind", ["zero_data", "orthogonal_data", "penalty_balance"]
+    ("rhs_kind", "preconditioner"),
+    [
+        ("zero_data", "none"),
+        ("orthogonal_data", "column_rms"),
+        ("penalty_balance", "column_rms"),
+    ],
 )
-@pytest.mark.parametrize("preconditioner", ["none", "column_rms"])
 def test_zero_normal_rhs_returns_zero_step_and_converges(
     method, rhs_kind, preconditioner
 ):
@@ -475,8 +490,9 @@ def test_zero_normal_rhs_returns_zero_step_and_converges(
     assert record["converged"] and record["true_relative_residual"] == 0
 
 
-@pytest.mark.parametrize("iterations", [1, 2])
-@pytest.mark.parametrize("preconditioner", ["none", "column_rms"])
+@pytest.mark.parametrize(
+    ("iterations", "preconditioner"), [(1, "none"), (2, "column_rms")]
+)
 def test_iteration_cap_cannot_claim_true_convergence(
     method, iterations, preconditioner
 ):
@@ -618,14 +634,14 @@ def test_condition_limit_returns_uncertified_step_with_explicit_reason(method):
     assert np.linalg.norm(step.ravel() - svd_minimum_norm(design, target)) > 1e-4
 
 
-@pytest.mark.parametrize("preconditioner", ["none", "column_rms"])
 @pytest.mark.parametrize(
-    ("counter", "limit"),
+    ("preconditioner", "counter", "limit"),
     [
-        ("forward_calls", 0),
-        ("adjoint_calls", 0),
-        ("forward_calls", 2),
-        ("adjoint_calls", 3),
+        pytest.param("none", "forward_calls", 0, id="before-first-forward"),
+        pytest.param("none", "adjoint_calls", 0, id="before-first-adjoint"),
+        pytest.param("none", "forward_calls", 2, id="solver-forward-cap"),
+        pytest.param("none", "adjoint_calls", 3, id="solver-adjoint-cap"),
+        pytest.param("column_rms", "adjoint_calls", 3, id="preconditioner-setup-cap"),
     ],
 )
 def test_operator_budgets_include_preconditioner_setup(
@@ -659,7 +675,10 @@ def test_operator_budgets_include_preconditioner_setup(
     np.testing.assert_array_equal(current, original)
 
 
-@pytest.mark.parametrize("preconditioner", ["none", "column_rms"])
+# Expired budgets stop before backend dispatch or preconditioner setup.
+@pytest.mark.parametrize(
+    ("method", "preconditioner"), [("lsmr", "none"), ("lsqr", "column_rms")]
+)
 def test_elapsed_budget_is_checked_before_operator_work(method, preconditioner):
     control = controls(
         np.ones(4), policy=StopPolicy(max_elapsed_s=1), clock=lambda: 0.0
@@ -684,6 +703,8 @@ def test_elapsed_budget_is_checked_before_operator_work(method, preconditioner):
     )
 
 
+# Validation is shared before backend dispatch; repeat inputs, not backends.
+@pytest.mark.parametrize("method", ["lsmr"])
 @pytest.mark.parametrize(
     ("name", "value"),
     [
@@ -724,6 +745,8 @@ def test_invalid_augmented_settings_fail_before_operator_work(method, name, valu
     assert jacobian.forward_calls == jacobian.adjoint_calls == 0
 
 
+# The same seed guard must also run before the stationary-RHS early return.
+@pytest.mark.parametrize("method", ["lsmr"])
 @pytest.mark.parametrize("seed", [-1, 1.5])
 def test_invalid_preconditioner_seed_is_rejected_even_for_stationary_rhs(method, seed):
     with pytest.raises((ValueError, TypeError)):

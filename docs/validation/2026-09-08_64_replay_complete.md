@@ -1,11 +1,54 @@
 # Completed recovery replay of the 64-channel campaign
 
+Historical record for 2026-09-08. Test counts, run status and timings below
+belong to that recovery replay and its recorded source versions, not a fresh
+verification of the current working tree.
+
 This records actual commands executed after restoring the published source,
 not planned runs or results copied from the historical 128-channel collection.
 Reconstruction code was frozen at `2de5aea8f556bdecd071dfb7f624b77fcdd135b7`;
 the four high-band pixel baselines used the unchanged original `78dea025`
 source. The acceptance gate and ten additional tests are in `3bedb101`.
 No reconstruction code or image defaults changed during this recovery replay.
+
+## Baseline acceptance and recovery provenance
+
+The rebuilt CPU workspace recovered commit
+`2de5aea8f556bdecd071dfb7f624b77fcdd135b7` from its GitHub Actions source archive,
+with recovered tree `b498a46277c32bfd21f1a9b0892b49c132518524`.
+Before the acceptance-gate additions, the replay verified 61 file hashes and
+all 12 HDF5 array/schema checks, reran the 199-test suite (199 passed, 2 external
+MATLAB tests skipped), and completed all four original baselines. The original
+source tree was kept separate and unchanged during those baseline runs.
+
+`check_64_baselines.py` compares saved speed arrays, tissue/water/residual
+scores, evaluation mask policy, receiver split, status, actual termination
+reason, selected/completed iterations, and simultaneous stop triggers. It
+records file hashes and explicit failed checks. Missing, corrupt, failed or
+nonfinite output cannot pass. Its default absolute tolerances are **1e-9 m/s
+for arrays and 1e-9 for numeric metrics**: floating-point reproducibility, not
+a clinical quality threshold. Runtime equality is not required across CPU hosts.
+
+The gate passed on the four newly replayed baselines in that historical run.
+The campaign shell driver invokes it after the high-band pixel baselines and
+before the basis experiment. Its ten added regression tests cover mismatched
+arrays, nonfinite values, changed policy/split/selection, failed/missing results,
+and metric changes; the resulting suite recorded 209 passes and the same two
+MATLAB skips. The gate did not introduce a new imaging algorithm or change
+reconstruction defaults.
+
+```bash
+python scripts/check_64_baselines.py \
+  --reference /path/usct_handoff_64/baselines_64 \
+  --actual /path/reproduced_64 \
+  --out /path/fresh_baseline_acceptance.json
+```
+
+Original acquisition files were neither modified nor uploaded to GitHub.
+Recovery logs, reconstructed arrays and timing curves were produced by that
+replay, not borrowed from the first CPU run; timing reflects its concurrent
+CPU load. The shell wrapper was syntax-checked, while its constituent commands
+were executed individually, not as an additional end-to-end wrapper run.
 
 ## Completed outputs
 
@@ -27,7 +70,7 @@ No reconstruction code or image defaults changed during this recovery replay.
   tests job for 3bedb101 (run 34200946736) also completed successfully, including
   its smoke and release gates. No MATLAB, A100 or production FWI run is claimed.
 
-## Newly measured numerical diagnostics
+## Numerical diagnostics from the recovery replay
 
 Siddon adjoint relative error: 7.130e-16. Eikonal adjoint: 4.627e-16.
 Eikonal directional derivative: 2.828e-9. Reduced-space straight and Eikonal
