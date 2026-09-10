@@ -127,6 +127,41 @@ def regularization_weight(diagonal, ratio, absolute=None):
     return float(ratio * np.median(positive))
 
 
+def ring_pair_mask(distance, tx_indices, rx_indices, fraction=None, *, elements=128):
+    """Exclude a symmetric fraction of the ring around each receiver.
+
+    Indices refer to the ORIGINAL uniform ring, not subsampled array rows.
+    A quarter means +/-45 degrees; boundary ties and self channels are excluded.
+    None preserves the historical half-diameter distance mask exactly.
+    """
+    distance = np.asarray(distance)
+    tx, rx = np.asarray(tx_indices), np.asarray(rx_indices)
+    if (
+        not isinstance(elements, int)
+        or elements < 2
+        or tx.ndim != 1
+        or rx.ndim != 1
+        or tx.dtype.kind not in "iu"
+        or rx.dtype.kind not in "iu"
+        or distance.shape != (tx.size, rx.size)
+        or not np.isfinite(distance).all()
+        or np.any(distance < 0)
+        or not np.any(distance > 0)
+        or np.any(tx >= elements)
+        or np.any(rx >= elements)
+        or np.any(tx < 0)
+        or np.any(rx < 0)
+    ):
+        raise ValueError("require valid ring indices and pair distances")
+    if fraction is None:
+        return distance > distance.max() * 0.5
+    if not np.isfinite(fraction) or not 0 <= fraction < 1:
+        raise ValueError("excluded neighbor fraction must be in [0, 1)")
+    separation = np.abs(tx[:, None] - rx[None])
+    separation = np.minimum(separation, elements - separation)
+    return (separation > fraction * elements / 2) & (distance > 0)
+
+
 def phase_initialization(case, measured, water, frequencies, distance, control, args):
     """Reuse the existing rWave phase-CGLS recipe, with this run's training split."""
     from types import SimpleNamespace
@@ -217,6 +252,11 @@ def main():
         "--delay-reference", choices=("water", "observed"), default="water"
     )
     parser.add_argument("--tx-stride", type=int, default=2, choices=(1, 2, 4, 8))
+    parser.add_argument(
+        "--exclude-neighbor-fraction",
+        type=float,
+        help="total ring fraction excluded around each receiver (0.25: +/-45 deg); default: legacy half-diameter mask",
+    )
     parser.add_argument(
         "--frequency-count",
         type=int,
@@ -369,6 +409,11 @@ def main():
         or args.initialization_smooth_mm < 0
     ):
         parser.error("invalid damping or feature/initialization setting")
+    if args.exclude_neighbor_fraction is not None and (
+        not np.isfinite(args.exclude_neighbor_fraction)
+        or not 0 <= args.exclude_neighbor_fraction < 1
+    ):
+        parser.error("exclude-neighbor-fraction must be in [0, 1)")
     args.out.mkdir(parents=True, exist_ok=False)
     (args.out / "executed_experiment.py").write_bytes(executed_source)
     helper_hash = None
@@ -401,7 +446,21 @@ def main():
     distance = np.linalg.norm(
         case.geometry.tx_pos_m[:, None] - case.geometry.rx_pos_m[None], axis=-1
     )
-    pair_valid = distance > distance.max() * 0.5
+    pair_valid = ring_pair_mask(distance, tx, rx, args.exclude_neighbor_fraction)
+    aperture = {
+        "policy": (
+            "legacy_distance_greater_than_half_diameter"
+            if args.exclude_neighbor_fraction is None
+            else "symmetric_original_ring_neighbor_exclusion"
+        ),
+        "requested_fraction": args.exclude_neighbor_fraction,
+        "parent_ring_elements": 128,
+        "excluded_pair_count": int((~pair_valid).sum()),
+        "excluded_pair_fraction": float((~pair_valid).mean()),
+        "excluded_tx_per_receiver": (~pair_valid).sum(axis=0).tolist(),
+        "pair_mask_sha256": hashlib.sha256(pair_valid.tobytes()).hexdigest(),
+        "scope": "feature_QC_training_residual_initialization_and_adjoint",
+    }
     with h5py.File(args.acquisition / "pressure.mat") as f:
         t = np.asarray(f["time"]).ravel()
         p = _read_channels(
@@ -504,6 +563,7 @@ def main():
             "valid_channels_per_qc_band": quality.valid.sum(axis=(1, 2)).tolist(),
         },
         "weight_policy": "uniform shared pairs, normalized by band count; not noise precision",
+        "aperture": aperture,
         "valid_fraction": float(valid.sum() / (len(bands) * pair_valid.sum())),
         "source_sha256": {
             str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -717,6 +777,7 @@ def main():
                     else "water_1500_mps"
                 ),
                 "model_parameterization": None if basis is None else basis.metadata(),
+                "aperture": aperture,
             },
             sort_keys=False,
         )

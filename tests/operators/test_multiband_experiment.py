@@ -57,6 +57,78 @@ def test_fixed_regularization_weight_does_not_follow_band_sensitivity():
         select(np.zeros(3), 0.02)
 
 
+def test_ring_exclusion_uses_parent_indices_and_preserves_legacy_mask():
+    mask = load_experiment().ring_pair_mask
+    ids = np.arange(0, 128, 2)
+    positions = np.column_stack([np.sin(ids * np.pi / 64), np.cos(ids * np.pi / 64)])
+    distance = np.linalg.norm(positions[:, None] - positions[None], axis=-1)
+    legacy = mask(distance, ids, ids)
+    np.testing.assert_array_equal(legacy, distance > distance.max() * 0.5)
+    quarter, half = [mask(distance, ids, ids, f) for f in (0.25, 0.5)]
+    assert np.all((~quarter).sum(axis=0) == 17)
+    assert np.all((~half).sum(axis=0) == 33)
+    assert np.all(~half | legacy) and np.all(~legacy | quarter)
+    np.testing.assert_array_equal(quarter, quarter.T)
+    np.testing.assert_array_equal(
+        mask(distance[::2], ids[::2], ids, 0.25), quarter[::2]
+    )
+    np.testing.assert_array_equal(
+        mask(distance, (ids + 19) % 128, (ids + 19) % 128, 0.25), quarter
+    )
+    for bad in (-0.01, 1.0, np.nan, np.inf):
+        with pytest.raises(ValueError, match="fraction"):
+            mask(distance, ids, ids, bad)
+
+
+def test_near_channels_cannot_leak_into_finite_frequency_gradient():
+    from usctbench.core.schema import GridSpec, GeometrySpec, USCTCase, MeasurementSpec
+    from usctbench.operators.forward.ray_born import RayBornOperator, RayBornForward
+    from usctbench.operators.forward.band_delay import FiniteFrequencyTravelTimeForward
+
+    ids = np.arange(8)
+    positions = 0.01 * np.column_stack(
+        [np.sin(ids * np.pi / 4), np.cos(ids * np.pi / 4)]
+    )
+    distance = np.linalg.norm(positions[:, None] - positions[None], axis=-1)
+    pair = load_experiment().ring_pair_mask(distance, ids, ids, 0.25, elements=8)
+    grid = GridSpec(shape=(8, 8), spacing_m=(0.001, 0.001), origin_m=(-0.004, -0.004))
+    geom = GeometrySpec(tx_pos_m=positions, rx_pos_m=positions)
+    frequencies = np.linspace(100e3, 300e3, 9)
+    water = RayBornOperator(grid, geom, frequencies).background_data()
+    observation = BandCorrelationDelay(
+        frequencies, np.where(pair[None], water, 0), np.ones((1, 9)), -3e-6, 3e-6
+    )
+    forward = FiniteFrequencyTravelTimeForward(
+        RayBornForward(grid, geom, frequencies, green_backend="volume_integral"),
+        observation,
+        water,
+    )
+    model = np.full(grid.shape, 1 / 1500**2)
+    model[3:5, 3:5] = 1 / 1480**2
+    lin = forward.linearize(model)
+    observed = lin.value + 1e-7
+    case = USCTCase(
+        case_id="masked_gradient",
+        grid=grid,
+        geometry=geom,
+        measurement=MeasurementSpec(domain="features", delta_tof_s=observed[0]),
+    )
+    gradients = []
+    for bad in (np.nan, 1e20):
+        values = observed.copy()
+        values[:, ~pair] = bad
+        control = InversionControl(
+            case, AlgorithmConfig(), values, default_iterations=1, valid_mask=pair[None]
+        )
+        sensitivity = control.weighted_residual(lin.value)
+        np.testing.assert_array_equal(sensitivity[:, ~pair], 0)
+        pressure_source = lin.jacobian.observation.adjoint(sensitivity)
+        np.testing.assert_array_equal(pressure_source[:, ~pair], 0)
+        gradients.append(lin.jacobian.adjoint(sensitivity))
+    np.testing.assert_array_equal(gradients[0], gradients[1])
+    assert np.isfinite(gradients[0]).all() and np.linalg.norm(gradients[0]) > 0
+
+
 def test_direct_observed_correlation_chain_and_channel_locality():
     module = load_experiment()
     f = np.linspace(80e3, 350e3, 15)
