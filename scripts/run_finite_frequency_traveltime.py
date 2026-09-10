@@ -180,6 +180,17 @@ def common_observable_evaluation(
     return report
 
 
+def selected_pressure_ratio(pressure, model, reference):
+    """A separate post-hoc forward must not inherit an exhausted solver budget."""
+    assessment = RayBornForward(
+        pressure.grid,
+        pressure.geometry,
+        pressure.frequencies_hz,
+        **{**pressure.settings, "budget_check": None},
+    )
+    return assessment.linearize(model).value / reference
+
+
 def regularization_weight(diagonal, ratio, absolute=None):
     """Allow changing observations without implicitly changing the prior weight."""
     value = ratio if absolute is None else absolute
@@ -1191,9 +1202,8 @@ def main():
     # Recompute at the validation-selected model, never the last trial cache.
     # Assessment is outside optimization and cannot affect its selected state.
     assessment_start = time.perf_counter()
-    pressure.budget_check = None
     try:
-        predicted_ratio = pressure.linearize(1 / speed**2).value / reference
+        predicted_ratio = selected_pressure_ratio(pressure, 1 / speed**2, reference)
         assessment = common_observable_evaluation(
             predicted_ratio, ratio, water_picker, relative_base, control.split
         )

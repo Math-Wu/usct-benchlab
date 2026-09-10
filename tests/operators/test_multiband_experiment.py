@@ -425,6 +425,17 @@ def test_reduced_nonlinear_full_chain_and_checkpoint(tmp_path):
     )
     assert reduced.grid.shape == (4, 4)
     assert reduced.physics.grid.shape == (10, 10)
+
+    def expired_budget():
+        raise RuntimeError("optimization budget exhausted")
+
+    fine.pressure.settings["budget_check"] = expired_budget
+    assessment_ratio = module.selected_pressure_ratio(
+        fine.pressure, basis.forward(model), water
+    )
+    assert fine.pressure.settings["budget_check"] is expired_budget
+    np.testing.assert_allclose(obs.linearize(assessment_ratio).value, lin.value)
+    fine.pressure.settings["budget_check"] = None
     case = USCTCase(
         case_id="coefficient_checkpoint",
         grid=grid,
