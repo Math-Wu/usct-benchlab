@@ -3,7 +3,8 @@
 The observable maximizes Re sum_f a_f Q_f exp(-i omega_f tau), where Q is
 pressure divided by independent water. It is NOT a geometrical first arrival.
 Derivatives require a stationary interior peak with certified local concavity.
-The global search and peak gap remain sampled; distant peak switching is nonsmooth.
+Candidate intervals are located on a sampled grid, but competing peaks are all
+refined before ranking. Distant peak switching remains genuinely nonsmooth.
 """
 
 from dataclasses import dataclass
@@ -64,7 +65,8 @@ class BandCorrelationDelay:
     Frequency holdouts must be removed BEFORE constructing bands; overlapping
     bands cannot be called independent frequency validation data.
     ``valid`` certifies refinement and local concavity, not global uniqueness.
-    ``peak_gap`` compares sampled competitors, not all continuous maxima.
+    ``peak_gap`` compares refined, sampled-located competitors. This does not
+    certify that arbitrarily close or flat maxima have all been resolved.
     """
 
     def __init__(
@@ -112,6 +114,60 @@ class BandCorrelationDelay:
         self.step = self.lags[1] - self.lags[0]
         self.phasors = np.exp(-1j * self.lags[:, None] * self.omega[None])
 
+    def _refined_peaks(self, correlation, weighted_ratio, lo, hi):
+        """Rank continuous peaks, never a single sampled winner's refinement."""
+        inside = (self.lags[:, None] >= lo) & (self.lags[:, None] <= hi)
+        maxima = np.zeros_like(inside)
+        maxima[1:-1] = (correlation[1:-1] > correlation[:-2]) & (
+            correlation[1:-1] >= correlation[2:]
+        )
+        maxima &= inside
+        # Include the constrained sampled maximum even when it is at a bound;
+        # selecting an interior runner-up must not hide an invalid boundary peak.
+        sampled = np.argmax(np.where(inside, correlation, -np.inf), axis=0)
+        maxima[sampled, np.arange(len(lo))] = True
+        rows, columns = np.nonzero(maxima)
+        tau = self.lags[rows].copy()
+        left = np.maximum(lo[columns], tau - self.step)
+        right = np.minimum(hi[columns], tau + self.step)
+        z = weighted_ratio[:, columns]
+        omega = self.omega[:, None]
+        magnitude = np.abs(z)
+        slope_scale = np.sum(magnitude * omega, axis=0)
+        curvature_scale = np.sum(magnitude * omega**2, axis=0)
+        clipped = np.zeros(len(rows), dtype=bool)
+        for _ in range(32):
+            rotated = z * np.exp(-1j * omega * tau)
+            slope = np.sum(omega * rotated.imag, axis=0)
+            curvature = np.sum(omega**2 * rotated.real, axis=0)
+            increment = np.divide(
+                slope, curvature, out=np.zeros_like(tau), where=curvature > 0
+            )
+            roundoff = np.divide(
+                32
+                * np.finfo(float).eps
+                * (slope_scale + np.abs(tau) * curvature_scale),
+                curvature,
+                out=np.full_like(tau, np.inf),
+                where=curvature > 0,
+            )
+            moving = (~clipped) & (np.abs(increment) > roundoff)
+            if not np.any(moving):
+                break
+            proposed = tau + np.where(moving, increment, 0)
+            clipped |= (proposed <= left) | (proposed >= right)
+            tau = np.clip(proposed, left, right)
+        scores = np.sum(z * np.exp(-1j * omega * tau), axis=0).real
+        ranking = np.full_like(correlation, -np.inf)
+        ranking[rows, columns] = scores
+        lookup = np.full(correlation.shape, -1, dtype=int)
+        lookup[rows, columns] = np.arange(len(rows))
+        chosen = lookup[np.argmax(ranking, axis=0), np.arange(len(lo))]
+        second = np.zeros(len(lo))
+        distant = np.abs(tau - tau[chosen[columns]]) > 2 * self.step
+        np.maximum.at(second, columns[distant], scores[distant])
+        return tau[chosen], left[chosen], right[chosen], clipped[chosen], second
+
     def linearize(self, pressure_ratio):
         ratio = np.asarray(pressure_ratio, dtype=complex)
         if ratio.shape != self.data_shape:
@@ -137,38 +193,14 @@ class BandCorrelationDelay:
                 w, z = weights[:, start:stop], q[:, start:stop]
                 lo, hi = self.lower.ravel()[start:stop], self.upper.ravel()[start:stop]
                 correlation = (self.phasors @ (w * z)).real
-                inside = (self.lags[:, None] >= lo) & (self.lags[:, None] <= hi)
-                candidate = np.where(inside, correlation, -np.inf)
-                peak = np.argmax(candidate, axis=0)
-                tau = self.lags[peak].copy()
-                left = np.maximum(lo, tau - self.step)
-                right = np.minimum(hi, tau + self.step)
+                tau, left, right, clipped, second = self._refined_peaks(
+                    correlation, w * z, lo, hi
+                )
                 magnitude = w * np.abs(z)
                 envelope = magnitude.sum(axis=0)
                 slope_scale = np.sum(magnitude * omega, axis=0)
                 curvature_scale = np.sum(magnitude * omega**2, axis=0)
                 third_derivative_bound = np.sum(magnitude * omega**3, axis=0)
-                clipped = np.zeros(tau.shape, dtype=bool)
-                for _ in range(32):
-                    phase = np.exp(-1j * omega * tau)
-                    rotated = w * z * phase
-                    slope = np.sum(omega * rotated.imag, axis=0)
-                    curvature = np.sum(omega**2 * rotated.real, axis=0)
-                    increment = np.divide(
-                        slope, curvature, out=np.zeros_like(tau), where=curvature > 0
-                    )
-                    roundoff = np.divide(
-                        roundoff_factor * (slope_scale + np.abs(tau) * curvature_scale),
-                        curvature,
-                        out=np.full_like(tau, np.inf),
-                        where=curvature > 0,
-                    )
-                    moving = (~clipped) & (np.abs(increment) > roundoff)
-                    if not np.any(moving):
-                        break
-                    proposed = tau + np.where(moving, increment, 0)
-                    clipped |= (proposed <= left) | (proposed >= right)
-                    tau = np.clip(proposed, left, right)
                 phase = np.exp(-1j * omega * tau)
                 rotated = w * z * phase
                 score = rotated.real.sum(axis=0)
@@ -196,16 +228,6 @@ class BandCorrelationDelay:
                     error <= np.maximum(1e-6 * self.step, roundoff)
                 )
                 okay &= np.isfinite(margin) & (margin > 0)
-                local_max = np.zeros_like(inside)
-                local_max[1:-1] = (correlation[1:-1] > correlation[:-2]) & (
-                    correlation[1:-1] >= correlation[2:]
-                )
-                competitor = (
-                    local_max
-                    & inside
-                    & (np.abs(self.lags[:, None] - tau) > 2 * self.step)
-                )
-                second = np.max(np.where(competitor, correlation, 0), axis=0)
                 delay[b].ravel()[start:stop] = tau
                 valid[b].ravel()[start:stop] &= okay
                 stationarity_error[b].ravel()[start:stop] = error

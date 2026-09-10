@@ -54,6 +54,48 @@ def test_peak_jacobian_and_real_complex_adjoint():
     )
 
 
+def test_competing_peaks_are_ranked_after_refinement_and_translate_continuously():
+    from scipy.optimize import minimize_scalar
+
+    frequencies = np.linspace(100e3, 1e6, 91)
+    water = np.exp(-0.25 * ((frequencies - 600e3) / 150e3) ** 2)[:, None, None]
+    op = BandCorrelationDelay(
+        frequencies, water, np.ones((1, len(frequencies))), -12e-6, 12e-6
+    )
+    # The stronger peak is halfway between grid points. The slightly weaker
+    # peak sits on a grid point, so ranking samples selects the wrong arrival.
+    first = op.lags[np.argmin(abs(op.lags + 5e-6))] + 0.5 * op.step
+    second = op.lags[np.argmin(abs(op.lags - 5e-6))]
+    ratio = (np.exp(1j * op.omega * first) + 0.999 * np.exp(1j * op.omega * second))[
+        :, None, None
+    ]
+    weighted = op.power[0, :, 0, 0] * ratio[:, 0, 0]
+    oracle = []
+    for center in (first, second):
+        peak = minimize_scalar(
+            lambda us: -np.sum(weighted * np.exp(-1j * op.omega * us * 1e-6)).real,
+            bounds=((center - op.step) * 1e6, (center + op.step) * 1e6),
+            method="bounded",
+            options={"xatol": 1e-11},
+        )
+        oracle.append(peak)
+    assert -oracle[0].fun > -oracle[1].fun
+    fit = op.linearize(ratio)
+    assert fit.valid.all()
+    np.testing.assert_allclose(fit.value, oracle[0].x * 1e-6, atol=2e-14, rtol=0)
+    np.testing.assert_allclose(
+        fit.peak_gap, 1 - oracle[1].fun / oracle[0].fun, atol=1e-12
+    )
+    for shift in (-0.6 * op.step, -0.01 * op.step, 0.2 * op.step):
+        translated = op.linearize(ratio * np.exp(1j * op.omega[:, None, None] * shift))
+        assert translated.valid.all()
+        np.testing.assert_allclose(translated.value, fit.value + shift, atol=1e-15)
+    # Derivative along a physical time translation is exactly one.
+    np.testing.assert_allclose(
+        fit.forward(1j * op.omega[:, None, None] * ratio), 1, atol=1e-12
+    )
+
+
 def test_reported_local_certificate_matches_independent_spectral_derivatives():
     op = observation()
     rng = np.random.default_rng(216)

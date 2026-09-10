@@ -575,7 +575,7 @@ def main():
             "stationary_refined_peak_required": True,
             "local_concavity_certificate": "curvature > 2 * lag_step * bound_abs_third_derivative",
             "global_peak_uniqueness_certified": False,
-            "peak_gap_scope": "sampled_competing_maxima_only",
+            "peak_gap_scope": "refined_sampled_located_competing_maxima",
             "valid_channels_per_qc_band": quality.valid.sum(axis=(1, 2)).tolist(),
         },
         "weight_policy": "uniform shared pairs, normalized by band count; not noise precision",
