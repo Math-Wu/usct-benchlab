@@ -1,6 +1,7 @@
 """GT-free objective/step diagnostics at a saved complete nonlinear iterate."""
 
 import numpy as np
+import time
 from scipy.ndimage import gaussian_filter
 
 from usctbench.solvers.least_squares import normal_step, normal_regularizer, regularizer
@@ -17,6 +18,11 @@ def audit_iterate(
     regularization,
     smooth_sigma=0,
     inner_iterations=12,
+    compare_inner_solvers=False,
+    inner_options=None,
+    audit_methods=None,
+    skip_gradient_fd=False,
+    audit_caps=None,
 ):
     lin = control.call("forward", forward.linearize, state)
     residual = control.weighted_residual(lin.value)
@@ -35,7 +41,37 @@ def audit_iterate(
     if not np.isfinite(value) or not np.isfinite(gradient).all():
         raise FloatingPointError("invalid objective or gradient at audit checkpoint")
     steps = []
-    for iterations in sorted(set([inner_iterations, max(64, inner_iterations)])):
+    plans = [
+        ("normal_cg", "none", n)
+        for n in sorted(set([inner_iterations, max(64, inner_iterations)]))
+    ]
+    if compare_inner_solvers:
+        plans += [
+            (method, preconditioner, inner_iterations)
+            for method, preconditioner in [
+                ("lsmr", "none"),
+                ("lsqr", "none"),
+                ("lsmr", "column_rms"),
+            ]
+        ]
+    if audit_methods:
+        plans = [
+            (
+                "lsmr" if name == "lsmr_column_rms" else name,
+                "column_rms" if name == "lsmr_column_rms" else "none",
+                inner_iterations,
+            )
+            for name in audit_methods
+        ]
+    if audit_caps:
+        plans = [
+            (method, preconditioner, cap)
+            for method, preconditioner, _ in plans
+            for cap in audit_caps
+        ]
+    for method, preconditioner, iterations in plans:
+        started = time.perf_counter()
+        counts = dict(control.work.counts)
         direction = normal_step(
             lin.jacobian,
             residual,
@@ -44,6 +80,20 @@ def audit_iterate(
             iterations=iterations,
             damping=damping,
             regularization=regularization,
+            method=method,
+            preconditioner=preconditioner,
+            **(inner_options or {}),
+        )
+        product = control.call("jacobian", lin.jacobian.forward, direction).reshape(
+            control.observed.shape
+        )
+        model_residual = np.where(
+            control.precision > 0, lin.value + product - control.observed, 0
+        )
+        reg = regularizer(state - reference + direction, regularization)
+        quadratic = (
+            0.5 * np.sum(control.precision * np.abs(model_residual) ** 2)
+            + 0.5 * damping * np.vdot(reg, reg).real
         )
         smoothed = (
             gaussian_filter(direction, smooth_sigma, mode="nearest")
@@ -56,6 +106,17 @@ def audit_iterate(
         steps.append(
             {
                 "inner": control.inner_solver_history[-1],
+                "elapsed_s": time.perf_counter() - started,
+                "work": {
+                    k: v - counts.get(k, 0)
+                    for k, v in control.work.counts.items()
+                    if v != counts.get(k, 0)
+                },
+                "quadratic_objective": float(quadratic),
+                "quadratic_reduction": float(value - quadratic),
+                "relative_step_norm": float(
+                    np.linalg.norm(direction) / np.linalg.norm(state)
+                ),
                 "newton_directional_derivative": float(
                     np.vdot(gradient, direction).real
                 ),
@@ -68,12 +129,14 @@ def audit_iterate(
             }
         )
 
+        print("completed inner audit", method, preconditioner, steps[-1], flush=True)
+
     # Difference the COMPLETE nonlinear penalized loss, not just J versus J*.
     # The direction scale is fixed from the current state, never from GT.
     direction = -gradient.copy()
     scale = float(np.max(np.abs(direction) / state))
     differences = []
-    if scale > 0:
+    if scale > 0 and not skip_gradient_fd:
         direction *= 0.002 / scale
         analytic = float(np.vdot(gradient, direction).real)
         for h in (1.0, 0.5, 0.25):
@@ -98,6 +161,7 @@ def audit_iterate(
         "gradient_norm": float(np.linalg.norm(gradient)),
         "normal_subproblems": steps,
         "objective_gradient_differences": differences,
+        "gradient_fd_performed": not skip_gradient_fd,
         "ground_truth_used": False,
         "reconstruction_performed": False,
         "scope": "saved_checkpoint_not_global_optimality_or_image_quality_certificate",

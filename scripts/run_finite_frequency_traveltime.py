@@ -214,6 +214,32 @@ def main():
     )
     parser.add_argument("--inner-iterations", type=int, default=12)
     parser.add_argument(
+        "--inner-solver", choices=("normal_cg", "lsmr", "lsqr"), default="lsmr"
+    )
+    parser.add_argument("--inner-rtol", type=float, default=1e-3)
+    parser.add_argument("--audit-inner-caps", nargs="+", type=int)
+    parser.add_argument(
+        "--skip-gradient-fd",
+        action="store_true",
+        help="saved-checkpoint solver audit only; do not repeat nonlinear gradient FD",
+    )
+    parser.add_argument(
+        "--audit-inner-methods",
+        nargs="+",
+        choices=("normal_cg", "lsmr", "lsqr", "lsmr_column_rms"),
+    )
+    parser.add_argument("--inner-atol", type=float, default=1e-10)
+    parser.add_argument("--inner-btol", type=float, default=1e-10)
+    parser.add_argument("--inner-conlim", type=float, default=1e8)
+    parser.add_argument(
+        "--inner-preconditioner", choices=("none", "column_rms"), default="none"
+    )
+    parser.add_argument(
+        "--compare-inner-solvers",
+        action="store_true",
+        help="saved-checkpoint audit of CG, LSMR, LSQR at identical work caps",
+    )
+    parser.add_argument(
         "--gradient-rtol",
         type=float,
         default=1e-8,
@@ -606,6 +632,16 @@ def main():
             regularization=regularization,
             smooth_sigma=direction_sigma,
             inner_iterations=args.inner_iterations,
+            compare_inner_solvers=args.compare_inner_solvers,
+            audit_methods=args.audit_inner_methods,
+            skip_gradient_fd=args.skip_gradient_fd,
+            audit_caps=args.audit_inner_caps,
+            inner_options=dict(
+                rtol=args.inner_rtol,
+                atol=args.inner_atol,
+                btol=args.inner_btol,
+                conlim=args.inner_conlim,
+            ),
         )
         report["checkpoint_sha256"] = hashlib.sha256(checkpoint_source).hexdigest()
         report["audit_helper_sha256"] = hashlib.sha256(helper_source).hexdigest()
@@ -634,6 +670,14 @@ def main():
             max_update_mps=12,
             max_backtracks=8,
             gradient_rtol=args.gradient_rtol,
+            inner_solver=args.inner_solver,
+            inner_options=dict(
+                rtol=args.inner_rtol,
+                atol=args.inner_atol,
+                btol=args.inner_btol,
+                conlim=args.inner_conlim,
+                preconditioner=args.inner_preconditioner,
+            ),
         )
     speed = 1 / np.sqrt(selected if basis is None else basis.forward(selected))
     metrics["initialization_qc"] = initialization_qc

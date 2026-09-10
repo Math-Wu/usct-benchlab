@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.linalg import norm
 
 from usctbench.algorithms._control import InversionControl, add_image_metrics
 from usctbench.algorithms.ray import (
@@ -83,6 +84,22 @@ class BentRayGNAdapter:
         inner = int(p.get("inner_iterations", 16))
         if inner < 1:
             raise ValueError("inner_iterations must be positive")
+        inner_solver = str(p.get("inner_solver", "lsmr"))
+        inner_options = dict(p.get("inner_options", {}))
+        allowed = {
+            "rtol",
+            "atol",
+            "btol",
+            "conlim",
+            "preconditioner",
+            "preconditioner_probes",
+            "preconditioner_seed",
+        }
+        if (
+            inner_solver not in {"normal_cg", "lsmr", "lsqr"}
+            or inner_options.keys() - allowed
+        ):
+            raise ValueError("invalid inner_solver or inner_options")
         kind = str(p.get("regularization", "laplacian"))
         damping = float(
             p.get("damping", float(p.get("regularization_lambda", 2e-2)) ** 2)
@@ -186,6 +203,8 @@ class BentRayGNAdapter:
                     np.zeros_like(s),
                     control,
                     iterations=initialization_iterations,
+                    method=inner_solver,
+                    **inner_options,
                     damping=damping,
                     regularization=kind,
                     roi=roi,
@@ -213,7 +232,8 @@ class BentRayGNAdapter:
                 gradient += damping * normal_regularizer(current, solver_kind)
                 if roi is not None:
                     gradient = np.where(roi, gradient, 0)
-                gradient_norm = float(np.linalg.norm(gradient))
+                # Flatten to preserve the Frobenius norm using scale-safe BLAS.
+                gradient_norm = float(norm(gradient.ravel(), check_finite=False))
                 if not np.isfinite(gradient_norm):
                     raise FloatingPointError("non-finite Eikonal objective gradient")
                 if initial_gradient_norm is None:
@@ -240,7 +260,7 @@ class BentRayGNAdapter:
                     0,
                     gradient,
                 )
-                feasible_norm = float(np.linalg.norm(feasible_gradient))
+                feasible_norm = float(norm(feasible_gradient.ravel()))
                 if feasible_norm == 0:
                     control.monitor.finish("stationary_projected_gradient")
                     break
@@ -250,6 +270,8 @@ class BentRayGNAdapter:
                     current,
                     control,
                     iterations=inner,
+                    method=inner_solver,
+                    **inner_options,
                     damping=damping,
                     regularization=solver_kind,
                     roi=roi,
@@ -261,7 +283,7 @@ class BentRayGNAdapter:
                 raw_update = update.copy()
                 with np.errstate(over="raise", invalid="raise"):
                     raw_slope = float(np.vdot(gradient, raw_update).real)
-                    scale = float(np.linalg.norm(raw_update))
+                    scale = float(norm(raw_update.ravel()))
                 if not np.isfinite([raw_slope, scale]).all():
                     raise FloatingPointError("non-finite Eikonal update norm or slope")
                 smoothed_slope = None
@@ -406,6 +428,8 @@ class BentRayGNAdapter:
                 "method_family": "first_arrival_eikonal",
                 "linearization_parameter": "slowness_s_per_m",
                 "inner_iterations": inner,
+                "inner_solver": inner_solver,
+                "inner_options": inner_options,
                 "initialization": initialization,
                 "initialization_training_only": initialization == "cgls",
                 "initialization_iterations": (

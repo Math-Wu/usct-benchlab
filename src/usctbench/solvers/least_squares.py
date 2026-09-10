@@ -45,12 +45,47 @@ def normal_step(
     damping=0.0,
     regularization="identity",
     roi=None,
+    method="normal_cg",
+    rtol=1e-7,
+    atol=1e-10,
+    btol=1e-10,
+    conlim=1e8,
+    preconditioner="none",
+    preconditioner_probes=8,
+    preconditioner_seed=0,
 ):
     """Truncated GN system (J* W J + damping L*L) step, exact discrete adjoints.
 
     `current` is the perturbation relative to the prior. Iterates of this inner
     linear solve are not complete nonlinear reconstructions or stopping units.
     """
+    if method in {"lsmr", "lsqr"}:
+        from usctbench.solvers.augmented import augmented_step
+
+        return augmented_step(
+            jacobian,
+            residual,
+            current,
+            control,
+            iterations=iterations,
+            damping=damping,
+            regularization=regularization,
+            roi=roi,
+            method=method,
+            rtol=rtol,
+            atol=atol,
+            btol=btol,
+            conlim=conlim,
+            preconditioner=preconditioner,
+            preconditioner_probes=preconditioner_probes,
+            preconditioner_seed=preconditioner_seed,
+        )
+    if method != "normal_cg":
+        raise ValueError("inner solver must be normal_cg, lsmr or lsqr")
+    if preconditioner != "none":
+        raise ValueError("normal_cg does not support column_rms preconditioning")
+    if not np.isfinite(rtol) or rtol < 0:
+        raise ValueError("rtol must be finite and nonnegative")
     active = (
         np.ones(current.shape, dtype=bool)
         if roi is None
@@ -82,7 +117,7 @@ def normal_step(
     initial_rhs = rhs.copy()
     completed = 0
     for _ in range(iterations):
-        if rr <= max(np.finfo(float).tiny, initial_rr * 1e-14):
+        if rr <= max(np.finfo(float).tiny, initial_rr * rtol**2):
             break
         q = normal_product(direction)
         denom = float(np.vdot(direction, q).real)
@@ -113,7 +148,14 @@ def normal_step(
         "iteration_limit": iterations,
         "recursive_relative_residual": float(np.sqrt(rr) / denominator),
         "true_relative_residual": true_norm / denominator,
-        "converged": bool(true_norm <= denominator * 1e-7),
+        "converged": bool(true_norm <= denominator * rtol),
+        "rtol": rtol,
+        "certificate_scope": "normal_residual_only_not_parameter_accuracy_or_backward_error",
+        "stop_reason": (
+            "normal_residual_target"
+            if true_norm <= denominator * rtol
+            else "iteration_limit"
+        ),
     }
     if not hasattr(control, "inner_solver_history"):
         control.inner_solver_history = []

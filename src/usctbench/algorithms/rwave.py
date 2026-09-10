@@ -383,6 +383,8 @@ class RWaveAdapter:
                 initial=initial_model,
                 bounds=bounds,
                 inner_iterations=p.get("inner_iterations", 12),
+                inner_solver=str(p.get("inner_solver", "lsmr")),
+                inner_options=p.get("inner_options", {}),
                 damping=damping,
                 regularization=regularization,
                 roi=roi,

@@ -71,6 +71,8 @@ are OR conditions, and validation observations cannot enter an update.
 | --- | --- | --- |
 | `regularization_lambda` | finite float, >= 0 | Square root of the normal-equation penalty coefficient; not interchangeable across parameterizations |
 | `inner_iterations` | integer, > 0 | Truncated linear solve cap per nonlinear outer step |
+| Native GN `inner_solver` | `lsmr` (default), `lsqr`, `normal_cg` | Augmented least squares or explicit legacy normal-CG comparison; does not change the forward model |
+| Native GN `inner_options` | mapping | `rtol`, `atol`, `btol`, `conlim` and optional column scaling; [definitions and numerical audit](validation/2026-09-10_augmented_least_squares_CN.md) |
 | CGLS `gradient_rtol` | finite float, >= 0, default 1e-10 | Relative active-set KKT tolerance for quadratic/Huber, bounded/unbounded convergence; checkpoint-specific verification is recorded |
 | `step_length` | finite float, > 0 | Initial step scale before backtracking |
 | `smooth_sigma` | finite float, >= 0 | Update smoothing width in reconstruction pixels |

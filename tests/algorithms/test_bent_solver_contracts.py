@@ -309,8 +309,9 @@ def test_unrepresentable_step_is_not_an_accepted_update(monkeypatch):
 
 
 @pytest.mark.parametrize("reduced", [False, True])
+@pytest.mark.parametrize("inner_solver", ["normal_cg", "lsmr", "lsqr"])
 def test_budget_after_rejected_trial_preserves_image_and_prediction(
-    monkeypatch, reduced
+    monkeypatch, reduced, inner_solver
 ):
     case, forward = _dense(monkeypatch, np.eye(4), np.full(4, 1e-6))
     result = bent.BentRayGNAdapter().run(
@@ -318,7 +319,10 @@ def test_budget_after_rejected_trial_preserves_image_and_prediction(
         _config(
             damping=0.2,
             step_length=10,
-            stopping={"max_forward_calls": 4},
+            inner_solver=inner_solver,
+            # Augmented solvers additionally measure an operator scale; count
+            # that call while still exhausting the budget AFTER a rejected trial.
+            stopping={"max_forward_calls": 4 if inner_solver == "normal_cg" else 5},
             **({"model_grid_shape": [2, 2]} if reduced else {}),
         ),
     )

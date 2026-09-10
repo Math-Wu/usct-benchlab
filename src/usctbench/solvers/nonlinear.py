@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.linalg import norm
 from scipy.ndimage import gaussian_filter
 
 from usctbench.core.stopping import BudgetExhausted
@@ -16,6 +17,8 @@ def nonlinear_least_squares(
     initial,
     bounds,
     inner_iterations=12,
+    inner_solver="lsmr",
+    inner_options=None,
     damping=0.0,
     regularization="laplacian",
     roi=None,
@@ -56,6 +59,21 @@ def nonlinear_least_squares(
         raise ValueError("smoothing and damping must be finite and nonnegative")
     if not np.isfinite(gradient_rtol) or gradient_rtol < 0:
         raise ValueError("gradient_rtol must be finite and nonnegative")
+    inner_options = dict(inner_options or {})
+    allowed = {
+        "rtol",
+        "atol",
+        "btol",
+        "conlim",
+        "preconditioner",
+        "preconditioner_probes",
+        "preconditioner_seed",
+    }
+    if (
+        inner_solver not in {"normal_cg", "lsmr", "lsqr"}
+        or inner_options.keys() - allowed
+    ):
+        raise ValueError("invalid inner_solver or inner_options")
     state = np.asarray(initial, dtype=float).copy()
     reference = state.copy()
     attempts = []
@@ -96,7 +114,8 @@ def nonlinear_least_squares(
             if not np.isfinite(gradient).all():
                 raise FloatingPointError("nonfinite nonlinear objective gradient")
             with np.errstate(over="raise", invalid="raise"):
-                gradient_norm = float(np.linalg.norm(gradient))
+                # Flatten to preserve the Frobenius norm using scale-safe BLAS.
+                gradient_norm = float(norm(gradient.ravel()))
             if not np.isfinite(gradient_norm):
                 raise FloatingPointError("nonfinite objective gradient norm")
             if initial_gradient_norm is None:
@@ -124,7 +143,7 @@ def nonlinear_least_squares(
                 0,
                 gradient,
             )
-            feasible_norm = float(np.linalg.norm(feasible_gradient))
+            feasible_norm = float(norm(feasible_gradient.ravel()))
             if feasible_norm == 0:
                 control.monitor.finish(
                     "stationary_surrogate_projected_gradient"
@@ -141,6 +160,8 @@ def nonlinear_least_squares(
                 damping=damping,
                 regularization=regularization,
                 roi=roi,
+                method=inner_solver,
+                **inner_options,
             )
             raw_direction = direction.copy()
             raw_slope = float(np.vdot(gradient, direction).real)
@@ -167,11 +188,11 @@ def nonlinear_least_squares(
             # A projected negative gradient provides an independently checked
             # fallback, at the same model-step scale, without changing the loss.
             with np.errstate(over="raise", invalid="raise"):
-                direction_scale = float(np.linalg.norm(raw_direction))
+                direction_scale = float(norm(raw_direction.ravel()))
             if not np.isfinite(direction_scale):
                 raise FloatingPointError("nonfinite Newton direction norm")
             if direction_scale == 0:
-                direction_scale = 1e-3 * np.linalg.norm(state)
+                direction_scale = 1e-3 * norm(state.ravel())
             gradient_step = -feasible_gradient * (direction_scale / feasible_norm)
             proposals.append(("projected_gradient", gradient_step))
             direction_checks.append(
@@ -261,6 +282,8 @@ def nonlinear_least_squares(
     metrics["direction_checks"] = direction_checks
     metrics["gradient_checks"] = gradient_checks
     metrics["gradient_rtol"] = gradient_rtol
+    metrics["inner_solver"] = inner_solver
+    metrics["inner_options"] = inner_options
     metrics["gradient_scope"] = (
         "provided_jacobian_regularized_training_gradient_at_listed_iterates_not_necessarily_selected_checkpoint"
     )
