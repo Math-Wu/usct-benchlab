@@ -365,5 +365,8 @@ def test_quadratic_weights_roi_and_penalty_match_dense_augmented_reference(
     target = np.r_[np.sqrt(weights[rows].ravel()) * observed[rows].ravel(), np.zeros(6)]
     expected = np.linalg.lstsq(design, target, rcond=None)[0]
     np.testing.assert_allclose(actual.ravel()[columns], expected, rtol=1e-9, atol=1e-11)
+    assert metrics["stop_reason"] == "stationary_gradient"
+    assert metrics["solver_optimality"]["verified"]
+    assert metrics["solver_optimality"]["converged"]
     np.testing.assert_array_equal(actual[~roi], 0)
     assert metrics["stop_reason"] in {"stationary_gradient", "max_iterations"}

@@ -79,7 +79,10 @@ def test_training_holdout_isolation_without_truth(algorithm):
         rtol=0,
         atol=0,
     )
-    assert first.metrics["stop_reason"] == "max_iterations"
+    assert first.metrics["stop_reason"] in {"max_iterations", "stationary_gradient"}
+    if first.metrics["stop_reason"] == "stationary_gradient":
+        assert first.metrics["solver_optimality"]["verified"]
+        assert first.metrics["solver_optimality"]["converged"]
     assert (
         first.metrics["evaluation"]["receiver"]["relative_residual"]
         != second.metrics["evaluation"]["receiver"]["relative_residual"]

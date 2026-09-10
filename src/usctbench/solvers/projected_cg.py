@@ -158,12 +158,10 @@ def projected_cg(
                 "projected_gradient_tolerance": tolerance,
                 "converged": converged,
             }
-            active_bounds = ~free & (true_gradient != 0)
-            if roi is not None:
-                active_bounds &= roi
-            # Preserve ordinary unbounded CGLS stopping; only the repaired
-            # robust/active-bound paths introduce a relative KKT stopping rule.
-            if converged and (huber_delta is not None or np.any(active_bounds)):
+            # Continuing CG after numerical stationarity can amplify roundoff,
+            # including on unconstrained/ROI-only quadratics. The same relative
+            # KKT check therefore applies to every objective, not only Huber.
+            if converged:
                 control.monitor.finish("stationary_gradient")
                 break
             restart = (
