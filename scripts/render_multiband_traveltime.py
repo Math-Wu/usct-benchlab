@@ -22,6 +22,14 @@ def main():
     parser.add_argument("--handoff", type=Path, required=True)
     parser.add_argument("--allow-checkpoint", action="store_true")
     parser.add_argument(
+        "--variant",
+        nargs=2,
+        action="append",
+        metavar=("LABEL", "RUN_TEMPLATE"),
+        help="explicit comparison column; run template contains {sample}",
+    )
+    parser.add_argument("--out", type=Path, help="PNG output, with a JSON sidecar")
+    parser.add_argument(
         "--suffix", default="", help="run-directory suffix, e.g. _stabilized_r2"
     )
     parser.add_argument(
@@ -31,11 +39,23 @@ def main():
         default=["single", "multi"],
     )
     args = parser.parse_args()
+    titles = {
+        "single": "One broad band",
+        "multi": "Three frequency bands",
+        "low": "Low band",
+    }
+    variants = args.variant or [
+        (titles[m], "{sample}_" + m + args.suffix) for m in args.modes
+    ]
+    for _, template in variants:
+        if "{sample}" not in template:
+            parser.error("each run template must contain {sample}")
+    output = args.out or args.runs / f"multiband_comparison{args.suffix}.png"
     plt.rcParams.update({"font.family": "DejaVu Serif", "font.size": 11})
     fig, axes = plt.subplots(
         2,
-        1 + len(args.modes),
-        figsize=(3.7 * (1 + len(args.modes)), 8),
+        1 + len(variants),
+        figsize=(3.7 * (1 + len(variants)), 8),
         layout="constrained",
     )
     records = []
@@ -58,8 +78,8 @@ def main():
             truth, cmap="gray", origin="lower", vmin=truth.min(), vmax=truth.max()
         )
         axes[row, 0].set_ylabel(label, fontweight="bold")
-        for col, mode in enumerate(args.modes, 1):
-            out = args.runs / (name + "_" + mode + args.suffix)
+        for col, (variant_label, template) in enumerate(variants, 1):
+            out = args.runs / template.format(sample=name)
             if (out / "result.h5").exists():
                 with h5py.File(out / "result.h5") as f:
                     image = np.asarray(f["sound_speed_mps"])
@@ -74,17 +94,21 @@ def main():
                 status = f"Intermediate iteration {iteration}, not final"
             else:
                 raise ValueError(f"unfinished run: {out}")
+            if image.shape != truth.shape or not np.isfinite(image).all():
+                raise ValueError(f"invalid reconstructed image: {out}")
             axes[row, col].imshow(
                 image, cmap="gray", origin="lower", vmin=truth.min(), vmax=truth.max()
             )
             axes[row, col].set_xlabel(
                 f"RMSE {metrics['rmse']:.2f} / PSNR {metrics['psnr']:.2f}\nSSIM {metrics['ssim']:.3f}\n{status}",
                 fontsize=10,
+                fontweight="bold",
             )
             records.append(
                 {
                     "sample": name,
-                    "mode": mode,
+                    "variant": variant_label,
+                    "run": out.name,
                     "status": status,
                     **{k: metrics[k] for k in ("rmse", "psnr", "ssim")},
                 }
@@ -93,21 +117,20 @@ def main():
         for ax in row:
             ax.set_xticks([])
             ax.set_yticks([])
-    titles = {
-        "single": "One broad band",
-        "multi": "Three frequency bands",
-        "low": "Low band",
-    }
-    for ax, title in zip(axes[0], ["GT"] + [titles[m] for m in args.modes]):
+    for ax, title in zip(axes[0], ["GT"] + [label for label, _ in variants]):
         ax.set_title(title, fontweight="bold")
     fig.suptitle(
         "Finite-frequency traveltime / 64 TX x 64 RX / 256 x 256\nTissue-region metrics; common raw pressure and QC"
     )
-    fig.savefig(args.runs / f"multiband_comparison{args.suffix}.png", dpi=180)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=180)
     plt.close(fig)
-    (args.runs / f"image_comparison{args.suffix}.json").write_text(
-        json.dumps(records, indent=2)
+    sidecar = (
+        output.with_suffix(".json")
+        if args.out
+        else args.runs / f"image_comparison{args.suffix}.json"
     )
+    sidecar.write_text(json.dumps(records, indent=2))
     print(json.dumps(records, indent=2))
 
 

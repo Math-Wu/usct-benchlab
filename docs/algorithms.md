@@ -112,6 +112,15 @@ does not create a tissue support mask.
 For native Bent, `line_search: false` disables repeated step halving, not the
 descent acceptance rule. Gradient fallback trials still obey the global budget.
 
+The native squared-slowness Gauss-Newton loop first projects a proposal onto its
+speed and per-step bounds, then backtracks that actual feasible displacement.
+Repeatedly clipping a large raw direction after each halving can otherwise
+produce identical trial images. Logs separate the initial `step_length` from
+`backtracking_fraction` and record displacement norms. Inner least-squares
+accuracy does not certify an accepted outer step or a good reconstruction.
+Likewise, `exact_data_fit` is a data-target stop, not a certificate that the
+regularized objective gradient vanishes.
+
 The optional phase seed estimates group delay, not an exact first arrival.
 Aliasing and multipath can remain after its fit-quality checks. Its held-out
 frequencies are not used for phase unwrapping, initialization or physical-length

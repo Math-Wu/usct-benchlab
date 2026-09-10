@@ -51,6 +51,16 @@ The metadata explicitly distinguishes these claims. Native nonlinear Ray-Born
 recomputes propagation for trial models; descent is measured on that nonlinear
 training objective. Failure to find a descent step remains an explicit failure.
 
+The finite-frequency correlation-delay composition additionally requires a
+stationary, interior, locally resolved peak before exposing its implicit
+derivative. For correlation $C(\tau)$, a bound
+$M_3=\sum_f a_f|Q_f|\omega_f^3$ implies
+$|C'''|\leq M_3$. Requiring $-C''(\tau)>2\Delta\tau M_3$ certifies strict
+concavity in the neighborhood excluded from the sampled competitor search.
+Clipped or unfinished peak refinement is invalid. This is conservative local
+quality control, not a proof of a unique global maximum; distant peak switches
+remain nonsmooth and require nonlinear acceptance checks.
+
 ## Full-wave reference bridge
 
 The optional bridge calls an installed WaveformInversionUST `HelmholtzSolver.m`

@@ -33,6 +33,10 @@ def nonlinear_least_squares(
     A Born step can fail to descend for a WKB model (caustics, low frequency or
     discretization error). Such a run stops with line_search_failed, not a claim
     of convergence. The returned state/prediction is an atomic complete iterate.
+
+    ``step_length`` scales each raw proposal once, before box/speed projection.
+    Backtracking fractions then shrink that initial feasible displacement;
+    the first trial retains the original projection exactly.
     """
     for name, value in (
         ("inner_iterations", inner_iterations),
@@ -205,24 +209,42 @@ def nonlinear_least_squares(
                 }
             )
             for proposal_name, proposal in proposals:
+                first_candidate = np.clip(
+                    state + step_length * proposal,
+                    1 / bounds[1] ** 2,
+                    1 / bounds[0] ** 2,
+                )
+                candidate_speed = np.clip(
+                    1 / np.sqrt(first_candidate),
+                    speed - max_update_mps,
+                    speed + max_update_mps,
+                )
+                first_candidate = 1 / candidate_speed**2
+                if roi is not None:
+                    first_candidate = np.where(roi, first_candidate, reference)
+                initial_displacement = first_candidate - state
                 for backtrack in range(max_backtracks):
-                    alpha = step_length * 0.5**backtrack
-                    candidate = np.clip(
-                        state + alpha * proposal, 1 / bounds[1] ** 2, 1 / bounds[0] ** 2
+                    fraction = 0.5**backtrack
+                    # Keep the first trial bit-for-bit; later trials lie on its
+                    # feasible segment instead of saturating the raw step again.
+                    candidate = (
+                        first_candidate
+                        if backtrack == 0
+                        else state + fraction * initial_displacement
                     )
-                    candidate_speed = np.clip(
-                        1 / np.sqrt(candidate),
-                        speed - max_update_mps,
-                        speed + max_update_mps,
-                    )
-                    candidate = 1 / candidate_speed**2
                     if roi is not None:
                         candidate = np.where(roi, candidate, reference)
-                    slope = float(np.vdot(gradient, candidate - state).real)
+                    displacement = candidate - state
+                    slope = float(np.vdot(gradient, displacement).real)
                     row = {
                         "iteration": iteration,
                         "proposal": proposal_name,
-                        "step_length": alpha,
+                        "step_length": float(step_length),
+                        "backtracking_fraction": fraction,
+                        "displacement_norm": float(
+                            norm(displacement.ravel(), check_finite=False)
+                        ),
+                        "changed_pixel_count": int(np.count_nonzero(displacement)),
                         "projected_directional_derivative": slope,
                         "objective": None,
                         "accepted": False,
@@ -288,6 +310,15 @@ def nonlinear_least_squares(
         "provided_jacobian_regularized_training_gradient_at_listed_iterates_not_necessarily_selected_checkpoint"
     )
     metrics["line_search_acceptance"] = "projected_step_armijo_1e-4"
+    metrics["line_search_constraints"] = {
+        "strategy": "project_once_then_backtrack_feasible_displacement",
+        "step_length_applies_to": "raw_proposal_before_projection",
+        "backtracking_fraction_applies_to": "initial_feasible_displacement",
+        "sound_speed_bounds_mps": [float(bound) for bound in bounds],
+        "max_update_mps": float(max_update_mps),
+        "roi_fixed": roi is not None,
+        "displacement_parameter": "squared_slowness",
+    }
     metrics["derivative_kind"] = derivative_kind
     metrics["nonlinear_background_updates"] = max(0, len(control.monitor.history) - 1)
     return selected, metrics

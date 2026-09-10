@@ -4,6 +4,7 @@ import pytest
 from usctbench.core.schema import GridSpec, GeometrySpec
 from usctbench.operators.forward.band_delay import (
     BandCorrelationDelay,
+    BandDelayLinearization,
     FiniteFrequencyTravelTimeForward,
 )
 from usctbench.operators.forward.ray_born import RayBornForward, RayBornOperator
@@ -50,6 +51,146 @@ def test_peak_jacobian_and_real_complex_adjoint():
         np.vdot(lin.forward(perturbation), y).real,
         np.vdot(perturbation, lin.adjoint(y)).real,
         rtol=1e-12,
+    )
+
+
+def test_reported_local_certificate_matches_independent_spectral_derivatives():
+    op = observation()
+    rng = np.random.default_rng(216)
+    ratio = (1 + 0.1 * rng.normal(size=op.data_shape)) * np.exp(
+        1j * (op.omega[:, None, None] * 0.7e-6 + rng.normal(size=op.data_shape) * 0.05)
+    )
+    fit = op.linearize(ratio)
+    assert fit.valid.all()
+    omega = op.omega[None, :, None, None]
+    rotated = op.power * ratio[None] * np.exp(-1j * omega * fit.value[:, None])
+    slope = np.sum(omega * rotated.imag, axis=1)
+    curvature = np.sum(omega**2 * rotated.real, axis=1)
+    third_bound = np.sum(op.power * np.abs(ratio)[None] * omega**3, axis=1)
+    np.testing.assert_allclose(
+        fit.stationarity_error_s, np.abs(slope / curvature), rtol=1e-12, atol=1e-21
+    )
+    np.testing.assert_allclose(
+        fit.local_concavity_margin, curvature - 2 * op.step * third_bound, rtol=1e-12
+    )
+    assert np.all(fit.stationarity_error_s < 1e-6 * op.step)
+    assert np.all(fit.local_concavity_margin > 0)
+    for offset in np.linspace(-2 * op.step, 2 * op.step, 17):
+        phase = np.exp(-1j * omega * (fit.value[:, None] + offset))
+        nearby_curvature = np.sum(
+            omega**2 * (op.power * ratio[None] * phase).real, axis=1
+        )
+        assert np.all(nearby_curvature >= fit.local_concavity_margin)
+
+    perturbation = rng.normal(size=ratio.shape) + 1j * rng.normal(size=ratio.shape)
+    epsilon = 1e-5
+    plus, minus = op.linearize(ratio + epsilon * perturbation), op.linearize(
+        ratio - epsilon * perturbation
+    )
+    assert plus.valid.all() and minus.valid.all()
+    np.testing.assert_allclose(
+        fit.forward(perturbation),
+        (plus.value - minus.value) / (2 * epsilon),
+        rtol=1e-6,
+        atol=1e-15,
+    )
+
+
+@pytest.mark.parametrize("oversample", [32, 128])
+@pytest.mark.parametrize("imbalance", [0, -1e-8, 1e-8])
+def test_unresolved_two_path_peaks_are_invalid_despite_high_sampled_gap(
+    oversample, imbalance
+):
+    frequencies = np.array([100e3, 200e3, 400e3])
+    angle = 0.01
+    amplitude = 16 * np.cos(angle) * np.cos(2 * angle)
+    water = np.sqrt([np.sqrt(2) * amplitude, 1, 1])[:, None, None]
+    op = BandCorrelationDelay(
+        frequencies, water, np.ones((1, 3)), -3e-6, 3e-6, oversample=oversample
+    )
+    path = np.exp(1j * op.omega * 1.25e-6)[:, None, None]
+    ratio = (1 + imbalance) * path + (1 - imbalance) * path.conj()
+    fit = op.linearize(ratio)
+    # At zero imbalance C is proportional to A*cos(x)-cos(4*x), with
+    # equal maxima at x=+/-angle, both inside the excluded competitor radius.
+    peak_separation = 2 * angle / (2 * np.pi * frequencies[0])
+    assert peak_separation < 2 * op.step
+    assert np.all(fit.coherence > 0.88)
+    assert np.all(fit.peak_gap > 0.99)
+    assert np.all(fit.local_concavity_margin < 0)
+    assert not fit.valid.any()
+    assert np.isnan(fit.value).all()
+    np.testing.assert_array_equal(fit.coefficient, 0)
+    np.testing.assert_array_equal(fit.forward(np.full_like(ratio, np.nan)), 0)
+    np.testing.assert_array_equal(fit.adjoint(np.full_like(fit.value, np.nan)), 0)
+
+
+@pytest.mark.parametrize("oversample", [8, 32])
+def test_flat_unique_peak_finishes_refinement_but_lacks_concavity_certificate(
+    oversample,
+):
+    frequencies = np.array([100e3, 150e3, 400e3])
+    op = BandCorrelationDelay(
+        frequencies,
+        np.ones((3, 1, 1)),
+        np.ones((1, 3)),
+        -3e-6,
+        3e-6,
+        oversample=oversample,
+    )
+    delta = 32 * 1.0001e-4 / (1 - 1.0001e-4)
+    tau = op.lags[len(op.lags) // 2] + 0.49 * op.step
+    ratio = np.array([16 + delta, 0, -1])[:, None, None] * np.exp(
+        1j * op.omega[:, None, None] * tau
+    )
+    fit = op.linearize(ratio)
+    # Six Newton steps leave a 5.705 ns correction for oversample=8.
+    # Finishing refinement does not turn this conservative local test into a
+    # necessary condition: the true peak is unique but still uncertified.
+    assert np.all(fit.stationarity_error_s < 1e-15)
+    assert np.all(fit.local_concavity_margin < 0)
+    assert not fit.valid.any()
+    assert np.isnan(fit.value).all()
+    np.testing.assert_array_equal(fit.coefficient, 0)
+
+
+def test_bound_clipping_never_exposes_an_implicit_peak_derivative():
+    frequencies = np.linspace(100e3, 400e3, 19)
+    op = BandCorrelationDelay(
+        frequencies, np.ones((19, 1, 1)), np.ones((1, 19)), -3e-6, 3e-6
+    )
+    ratio = np.exp(1j * op.omega[:, None, None] * 3.2e-6)
+    fit = op.linearize(ratio)
+    assert np.all(fit.local_concavity_margin > 0)
+    assert np.all(fit.stationarity_error_s > 1e-6 * op.step)
+    assert not fit.valid.any()
+    assert np.isnan(fit.value).all()
+    np.testing.assert_array_equal(fit.coefficient, 0)
+
+
+def test_local_concavity_does_not_claim_uniqueness_of_distant_peaks():
+    frequencies = np.array([200e3, 250e3, 300e3])
+    op = BandCorrelationDelay(
+        frequencies, np.ones((3, 1, 1)), np.ones((1, 3)), -6e-6, 6e-6
+    )
+    fit = op.linearize(-np.ones((3, 1, 1), complex))
+    assert fit.valid.all()
+    assert np.all(fit.local_concavity_margin > 0)
+    assert np.all(fit.peak_gap < 0.002)
+    assert np.all(np.abs(fit.value) > 1.9e-6)
+
+
+def test_optional_diagnostics_preserve_five_argument_composition():
+    op = observation()
+    fit = op.linearize(np.ones(op.data_shape, complex))
+    composed = BandDelayLinearization(
+        fit.value, fit.valid, fit.coherence, fit.peak_gap, fit.coefficient
+    )
+    assert composed.stationarity_error_s is None
+    assert composed.local_concavity_margin is None
+    np.testing.assert_array_equal(
+        composed.forward(1j * np.ones(op.data_shape)),
+        fit.forward(1j * np.ones(op.data_shape)),
     )
 
 

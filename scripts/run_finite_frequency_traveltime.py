@@ -97,6 +97,8 @@ class ObservedCorrelationDelay:
             fit.coherence,
             fit.peak_gap,
             fit.coefficient * multiplier[None],
+            stationarity_error_s=fit.stationarity_error_s,
+            local_concavity_margin=fit.local_concavity_margin,
         )
 
 
@@ -436,6 +438,13 @@ def main():
         ),
         "band_overlap": "not independent frequency holdout",
         "quality_policy": "common full-spectrum QC intersection across broad/three bands",
+        "peak_derivative_qc": {
+            "stationary_refined_peak_required": True,
+            "local_concavity_certificate": "curvature > 2 * lag_step * bound_abs_third_derivative",
+            "global_peak_uniqueness_certified": False,
+            "peak_gap_scope": "sampled_competing_maxima_only",
+            "valid_channels_per_qc_band": quality.valid.sum(axis=(1, 2)).tolist(),
+        },
         "weight_policy": "uniform shared pairs, normalized by band count; not noise precision",
         "valid_fraction": float(valid.sum() / (len(bands) * pair_valid.sum())),
         "source_sha256": {
@@ -451,6 +460,8 @@ def main():
         weights=weights,
         coherence=observed.coherence,
         peak_gap=observed.peak_gap,
+        stationarity_error_s=observed.stationarity_error_s,
+        local_concavity_margin=observed.local_concavity_margin,
     )
     print("prepared", args.bands, "valid", manifest["valid_fraction"], flush=True)
     if valid.sum() < 32:

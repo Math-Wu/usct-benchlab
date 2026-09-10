@@ -7,6 +7,65 @@ from scipy.ndimage import gaussian_filter
 from usctbench.solvers.least_squares import normal_step, normal_regularizer, regularizer
 
 
+def channel_derivative_audit(value, plus, minus, tangent, observed, precision, h):
+    """Attribute central loss-derivative error; never drop invalid training rays.
+
+    A large per-ray error is a diagnostic, not proof of a peak switch. Entries
+    outside the frozen training mask do not contribute, even if they are NaN.
+    """
+    arrays = [np.asarray(a) for a in (value, plus, minus, tangent, observed, precision)]
+    value, plus, minus, tangent, observed, precision = arrays
+    if any(a.shape != value.shape for a in arrays) or not np.isfinite(h) or h <= 0:
+        raise ValueError("require equal shapes and positive finite difference step")
+    if not np.isfinite(precision).all() or np.any(precision < 0):
+        raise ValueError("require finite nonnegative precision")
+    train = precision > 0
+    finite = np.logical_and.reduce([np.isfinite(a) for a in arrays[:-1]])
+    active = train & finite
+    w = precision[active]
+    r0, rp, rm = (
+        value[active] - observed[active],
+        plus[active] - observed[active],
+        minus[active] - observed[active],
+    )
+    analytic = w * (r0.conj() * tangent[active]).real
+    # Difference of squares in factored form avoids cancellation of large costs.
+    numeric = w * ((rp - rm).conj() * (rp + rm)).real / (4 * h)
+    error = numeric - analytic
+    indices = np.argwhere(active)
+    order = np.argsort(-np.abs(error), kind="stable")[:12]
+    records = []
+    for k in order:
+        index = tuple(indices[k])
+        records.append(
+            {
+                "index": list(map(int, index)),
+                "analytic_data_derivative": float(analytic[k]),
+                "central_data_derivative": float(numeric[k]),
+                "derivative_error": float(error[k]),
+                "base_delay_s": float(value[index]),
+                "plus_delay_s": float(plus[index]),
+                "minus_delay_s": float(minus[index]),
+                "linear_delay_change_s": float(h * tangent[index]),
+                "plus_linearization_error_s": float(
+                    plus[index] - value[index] - h * tangent[index]
+                ),
+                "minus_linearization_error_s": float(
+                    minus[index] - value[index] + h * tangent[index]
+                ),
+            }
+        )
+    return {
+        "training_count": int(train.sum()),
+        "invalid_training_count": int((train & ~finite).sum()),
+        "complete_training_derivative": bool(np.all(finite[train])),
+        "finite_training_data_derivative_error": float(error.sum()),
+        "sum_absolute_channel_errors": float(np.abs(error).sum()),
+        "top_channels": records,
+        "interpretation": "large_error_is_not_by_itself_proof_of_peak_switch",
+    }
+
+
 def audit_iterate(
     forward,
     control,
@@ -139,6 +198,7 @@ def audit_iterate(
     if scale > 0 and not skip_gradient_fd:
         direction *= 0.002 / scale
         analytic = float(np.vdot(gradient, direction).real)
+        tangent = control.call("jacobian", lin.jacobian.forward, direction)
         for h in (1.0, 0.5, 0.25):
             plus = state + h * direction
             minus = state - h * direction
@@ -153,6 +213,9 @@ def audit_iterate(
                     "relative_error": float(
                         abs(finite_difference - analytic)
                         / max(abs(analytic), np.finfo(float).tiny)
+                    ),
+                    "channels": channel_derivative_audit(
+                        lin.value, p, m, tangent, control.observed, control.precision, h
                     ),
                 }
             )

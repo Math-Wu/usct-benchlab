@@ -1,14 +1,22 @@
 """Experiment plumbing: portable configs and no held-out initialization leakage."""
 
 import importlib.util
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import yaml
 
 from usctbench.algorithms._control import InversionControl
 from usctbench.core.schema import AlgorithmConfig
+from usctbench.core.schema import ReconstructionResult
+from usctbench.core.io import write_case_hdf5, write_result_hdf5
+from usctbench.metrics import compute_regional_image_metrics
 from usctbench.operators.forward.band_delay import BandCorrelationDelay
 from usctbench.operators.model_space import BilinearBasis
 
@@ -175,3 +183,117 @@ def test_phase_initialization_ignores_validation_and_ground_truth(synthetic_case
     assert qc == second_qc
     assert qc["heldout_values_used"] is False
     assert np.isfinite(first).all()
+
+
+def audit_function():
+    path = Path(__file__).resolve().parents[2] / "scripts/_inverse_solver_audit.py"
+    spec = importlib.util.spec_from_file_location("inverse_audit", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.channel_derivative_audit
+
+
+def test_linear_model_channels_and_excluded_nan():
+    audit = audit_function()
+    value = np.array([[[1.0, 2.0, np.nan]]])
+    tangent = np.array([[[0.2, -0.3, np.nan]]])
+    weights = np.array([[[2.0, 0.5, 0.0]]])
+    out = audit(
+        value, value + tangent, value - tangent, tangent, value * 0, weights, 1.0
+    )
+    assert out["training_count"] == 2
+    assert out["invalid_training_count"] == 0
+    assert out["complete_training_derivative"]
+    assert abs(out["finite_training_data_derivative_error"]) < 1e-15
+
+
+def test_one_jump_is_localized_without_claiming_cause():
+    audit = audit_function()
+    value = np.ones((1, 2, 3)) * 1e-6
+    tangent = np.ones_like(value) * 1e-8
+    plus = value + tangent
+    plus[0, 1, 2] += 3e-6
+    out = audit(
+        value, plus, value - tangent, tangent, value * 0, np.ones_like(value), 1.0
+    )
+    top = out["top_channels"][0]
+    assert top["index"] == [0, 1, 2]
+    assert top["plus_linearization_error_s"] == pytest.approx(3e-6)
+    assert out["finite_training_data_derivative_error"] == pytest.approx(
+        top["derivative_error"]
+    )
+    assert "not_by_itself_proof" in out["interpretation"]
+
+
+def test_invalid_training_ray_is_not_silently_dropped():
+    value = np.ones((1, 1, 2))
+    plus = np.array([[[1.0, np.nan]]])
+    out = audit_function()(value, plus, value, value * 0, value * 0, value, 0.5)
+    assert out["invalid_training_count"] == 1
+    assert not out["complete_training_derivative"]
+
+
+@pytest.mark.parametrize("h", [0, -1, np.nan])
+def test_invalid_step(h):
+    x = np.ones((1, 1, 1))
+    with pytest.raises(ValueError, match="difference step"):
+        audit_function()(x, x, x, x, x, x, h)
+
+
+def test_explicit_variants_and_unfinished_refusal(tmp_path, synthetic_case):
+    repo = Path(__file__).resolve().parents[2]
+    for relative in (
+        "cases/high_band/D510022534/envelope_case.h5",
+        "cases/low_band/breast_train_speed_class_1_000000/pressure_case.h5",
+    ):
+        write_case_hdf5(synthetic_case, tmp_path / relative)
+    truth = synthetic_case.ground_truth.sound_speed_mps
+    metrics = compute_regional_image_metrics(truth, truth)
+    metrics["stop_reason"] = "max_iterations"
+    for sample in ("high_d", "low_ob"):
+        out = tmp_path / f"outer_{sample}_lsmr64"
+        out.mkdir()
+        write_result_hdf5(
+            ReconstructionResult(
+                algorithm="test",
+                case_id=synthetic_case.case_id,
+                sound_speed_mps=truth,
+                metrics=metrics,
+            ),
+            out / "result.h5",
+        )
+        (out / "metrics.json").write_text(json.dumps(metrics))
+        other = tmp_path / f"outer_{sample}_unfinished"
+        other.mkdir()
+        np.savez(other / "checkpoint.npz", squared_slowness=1 / truth**2)
+        (other / "progress.json").write_text(json.dumps([{"iteration": 2}]))
+    command = [
+        sys.executable,
+        str(repo / "scripts/render_multiband_traveltime.py"),
+        "--runs",
+        str(tmp_path),
+        "--handoff",
+        str(tmp_path),
+        "--variant",
+        "LSMR64",
+        "outer_{sample}_lsmr64",
+        "--out",
+        str(tmp_path / "comparison.png"),
+    ]
+    env = dict(os.environ, PYTHONPATH=str(repo / "src"))
+    completed = subprocess.run(command, env=env, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    records = json.loads((tmp_path / "comparison.json").read_text())
+    assert len(records) == 2
+    assert all(row["variant"] == "LSMR64" for row in records)
+    assert (tmp_path / "comparison.png").stat().st_size > 1000
+    unfinished = command + ["--variant", "Pending", "outer_{sample}_unfinished"]
+    refused = subprocess.run(unfinished, env=env, capture_output=True, text=True)
+    assert refused.returncode != 0
+    assert "unfinished run" in refused.stderr
+    allowed = subprocess.run(
+        unfinished + ["--allow-checkpoint"], env=env, capture_output=True, text=True
+    )
+    assert allowed.returncode == 0, allowed.stderr
+    records = json.loads((tmp_path / "comparison.json").read_text())
+    assert records[1]["status"] == "Intermediate iteration 2, not final"

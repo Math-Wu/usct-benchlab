@@ -2,7 +2,8 @@
 
 The observable maximizes Re sum_f a_f Q_f exp(-i omega_f tau), where Q is
 pressure divided by independent water. It is NOT a geometrical first arrival.
-Derivatives are local to a unique interior maximum; switching peaks is nonsmooth.
+Derivatives require a stationary interior peak with certified local concavity.
+The global search and peak gap remain sampled; distant peak switching is nonsmooth.
 """
 
 from dataclasses import dataclass
@@ -15,11 +16,21 @@ from usctbench.operators.forward.correlation_delay import CorrelationDelayDeriva
 
 @dataclass
 class BandDelayLinearization:
+    """Local derivative and diagnostics, not a global uniqueness certificate.
+
+    ``stationarity_error_s`` is abs(C' / -C'') or infinity if curvature is
+    nonpositive. ``local_concavity_margin`` is -C'' - 2*step*M3, where M3 bounds
+    abs(C'''). A positive margin certifies strict concavity within 2*step.
+    Optional defaults preserve callers that compose only the derivative.
+    """
+
     value: np.ndarray
     valid: np.ndarray
     coherence: np.ndarray
     peak_gap: np.ndarray
     coefficient: np.ndarray
+    stationarity_error_s: np.ndarray | None = None
+    local_concavity_margin: np.ndarray | None = None
 
     def forward(self, pressure_ratio_perturbation):
         value = np.asarray(pressure_ratio_perturbation, dtype=complex)
@@ -52,6 +63,8 @@ class BandCorrelationDelay:
     Bounds are per-pair seconds, fixed from geometry/speed limits without GT.
     Frequency holdouts must be removed BEFORE constructing bands; overlapping
     bands cannot be called independent frequency validation data.
+    ``valid`` certifies refinement and local concavity, not global uniqueness.
+    ``peak_gap`` compares sampled competitors, not all continuous maxima.
     """
 
     def __init__(
@@ -111,7 +124,11 @@ class BandCorrelationDelay:
         delay = np.zeros(shape)
         valid = self.base_valid.copy()
         coherence, gap = np.zeros(shape), np.zeros(shape)
+        stationarity_error = np.full(shape, np.inf)
+        concavity_margin = np.zeros(shape)
         coefficients = np.zeros_like(self.power, dtype=complex)
+        omega = self.omega[:, None]
+        roundoff_factor = 32 * np.finfo(float).eps
         for b in range(shape[0]):
             weights = self.power[b].reshape(len(self.omega), -1)
             q = ratio.reshape(len(self.omega), -1)
@@ -126,25 +143,59 @@ class BandCorrelationDelay:
                 tau = self.lags[peak].copy()
                 left = np.maximum(lo, tau - self.step)
                 right = np.minimum(hi, tau + self.step)
-                for _ in range(6):
-                    phase = np.exp(-1j * self.omega[:, None] * tau)
+                magnitude = w * np.abs(z)
+                envelope = magnitude.sum(axis=0)
+                slope_scale = np.sum(magnitude * omega, axis=0)
+                curvature_scale = np.sum(magnitude * omega**2, axis=0)
+                third_derivative_bound = np.sum(magnitude * omega**3, axis=0)
+                clipped = np.zeros(tau.shape, dtype=bool)
+                for _ in range(32):
+                    phase = np.exp(-1j * omega * tau)
                     rotated = w * z * phase
-                    slope = np.sum(self.omega[:, None] * rotated.imag, axis=0)
-                    curvature = np.sum(self.omega[:, None] ** 2 * rotated.real, axis=0)
+                    slope = np.sum(omega * rotated.imag, axis=0)
+                    curvature = np.sum(omega**2 * rotated.real, axis=0)
                     increment = np.divide(
                         slope, curvature, out=np.zeros_like(tau), where=curvature > 0
                     )
-                    tau = np.clip(tau + increment, left, right)
-                phase = np.exp(-1j * self.omega[:, None] * tau)
+                    roundoff = np.divide(
+                        roundoff_factor * (slope_scale + np.abs(tau) * curvature_scale),
+                        curvature,
+                        out=np.full_like(tau, np.inf),
+                        where=curvature > 0,
+                    )
+                    moving = (~clipped) & (np.abs(increment) > roundoff)
+                    if not np.any(moving):
+                        break
+                    proposed = tau + np.where(moving, increment, 0)
+                    clipped |= (proposed <= left) | (proposed >= right)
+                    tau = np.clip(proposed, left, right)
+                phase = np.exp(-1j * omega * tau)
                 rotated = w * z * phase
                 score = rotated.real.sum(axis=0)
-                curvature = np.sum(self.omega[:, None] ** 2 * rotated.real, axis=0)
-                envelope = np.sum(w * np.abs(z), axis=0)
-                curvature_scale = np.sum(
-                    w * np.abs(z) * self.omega[:, None] ** 2, axis=0
+                slope = np.sum(omega * rotated.imag, axis=0)
+                curvature = np.sum(omega**2 * rotated.real, axis=0)
+                error = np.divide(
+                    np.abs(slope),
+                    curvature,
+                    out=np.full_like(tau, np.inf),
+                    where=curvature > 0,
                 )
+                roundoff = np.divide(
+                    roundoff_factor * (slope_scale + np.abs(tau) * curvature_scale),
+                    curvature,
+                    out=np.full_like(tau, np.inf),
+                    where=curvature > 0,
+                )
+                # C''=-curvature and abs(C''')<=M3, so curvature-R*M3>0
+                # excludes a second stationary peak within the ignored radius R.
+                margin = curvature - 2 * self.step * third_derivative_bound
                 okay = (curvature > 1e-4 * curvature_scale) & (envelope > 0)
                 okay &= (tau > lo + self.step) & (tau < hi - self.step)
+                okay &= (~clipped) & (tau > left) & (tau < right)
+                okay &= np.isfinite(error) & (
+                    error <= np.maximum(1e-6 * self.step, roundoff)
+                )
+                okay &= np.isfinite(margin) & (margin > 0)
                 local_max = np.zeros_like(inside)
                 local_max[1:-1] = (correlation[1:-1] > correlation[:-2]) & (
                     correlation[1:-1] >= correlation[2:]
@@ -157,6 +208,8 @@ class BandCorrelationDelay:
                 second = np.max(np.where(competitor, correlation, 0), axis=0)
                 delay[b].ravel()[start:stop] = tau
                 valid[b].ravel()[start:stop] &= okay
+                stationarity_error[b].ravel()[start:stop] = error
+                concavity_margin[b].ravel()[start:stop] = margin
                 coherence[b].ravel()[start:stop] = np.divide(
                     score, envelope, out=np.zeros_like(score), where=envelope > 0
                 )
@@ -177,7 +230,13 @@ class BandCorrelationDelay:
                 ] = coefficient
         coefficients = np.where(valid[:, None], coefficients, 0)
         return BandDelayLinearization(
-            np.where(valid, delay, np.nan), valid, coherence, gap, coefficients
+            np.where(valid, delay, np.nan),
+            valid,
+            coherence,
+            gap,
+            coefficients,
+            stationarity_error,
+            concavity_margin,
         )
 
 
