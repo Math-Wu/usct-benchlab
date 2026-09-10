@@ -278,6 +278,18 @@ class StopMonitor:
                 triggers.append("validation_plateau")
         if iteration >= p.max_iterations:
             triggers.append("max_iterations")
+        # Preserve checkpoint quality evidence, including oracle-only triggers.
+        self.history[-1]["quality_triggered_rules"] = [
+            rule
+            for rule in triggers
+            if rule
+            in (
+                "exact_data_fit",
+                "target_residual",
+                "noise_discrepancy",
+                "oracle_quality_target",
+            )
+        ]
         if triggers:
             self.reason, self.triggers = triggers[0], triggers
         return self.reason
@@ -296,6 +308,11 @@ class StopMonitor:
 
     def record(self):
         _, selected = self.selected_state()
+        selected_quality_target_met = any(
+            row["quality_triggered_rules"]
+            for row in self.history
+            if row["iteration"] == selected
+        )
         return {
             "reason": self.reason or "not_terminated",
             "triggered_rules": list(self.triggers),
@@ -310,15 +327,11 @@ class StopMonitor:
             "budget_scope": "operator_calls; time_checked_between_calls",
             "ground_truth_used_for_stopping": self.policy.target_rmse_mps is not None,
             "has_complete_checkpoint": self.last_state is not None,
-            "quality_target_met": any(
-                rule in self.triggers
-                for rule in (
-                    "exact_data_fit",
-                    "target_residual",
-                    "noise_discrepancy",
-                    "oracle_quality_target",
-                )
+            "terminated_iterate_quality_target_met": bool(
+                self.history and self.history[-1]["quality_triggered_rules"]
             ),
+            "selected_iterate_quality_target_met": selected_quality_target_met,
+            "quality_target_met": selected_quality_target_met,
             "termination_category": (
                 "not_terminated"
                 if self.reason is None

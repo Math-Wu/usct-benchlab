@@ -113,6 +113,14 @@ def test_or_rules_record_all_triggers_with_priority():
         "noise_discrepancy",
         "max_iterations",
     ]
+    assert m.record()["quality_target_met"] is True
+    assert m.record()["selected_iterate_quality_target_met"] is True
+    assert m.record()["terminated_iterate_quality_target_met"] is True
+    assert m.history[0]["quality_triggered_rules"] == []
+    assert m.history[1]["quality_triggered_rules"] == [
+        "target_residual",
+        "noise_discrepancy",
+    ]
     json.dumps(m.record(), allow_nan=False)
 
 
@@ -132,6 +140,12 @@ def test_stop_reasons(kwargs, second, reason):
     else:
         observe(m, 0)
         assert observe(m, 1, **second) == reason
+    record = m.record()
+    assert record["quality_target_met"] is (reason == "exact_data_fit")
+    assert record["selected_iterate_quality_target_met"] is (reason == "exact_data_fit")
+    assert record["terminated_iterate_quality_target_met"] is (
+        reason == "exact_data_fit"
+    )
 
 
 def test_validation_restores_best_not_last_state():
@@ -144,6 +158,53 @@ def test_validation_restores_best_not_last_state():
     assert index == 1
     np.testing.assert_array_equal(state, [2.0])
     assert m.record()["completed_iterations"] == 3
+
+
+@pytest.mark.parametrize("restore_best_validation", [True, False])
+def test_quality_target_tracks_selected_checkpoint_not_termination(
+    restore_best_validation,
+):
+    m = monitor(
+        max_iterations=1,
+        target_rmse_mps=1,
+        allow_ground_truth_stopping=True,
+        restore_best_validation=restore_best_validation,
+    )
+    assert observe(m, 0, validation_relative=0.1, quality_rmse_mps=2) is None
+    assert (
+        observe(m, 1, validation_relative=0.2, quality_rmse_mps=0.5)
+        == "oracle_quality_target"
+    )
+    state, index = m.selected_state()
+    assert index == (0 if restore_best_validation else 1)
+    np.testing.assert_array_equal(state, [index + 1.0])
+    record = m.record()
+    assert record["quality_target_met"] is (not restore_best_validation)
+    assert record["selected_iterate_quality_target_met"] is (
+        not restore_best_validation
+    )
+    assert record["terminated_iterate_quality_target_met"] is True
+    assert record["selected_iteration"] == index
+    assert record["reason"] == "oracle_quality_target"
+    assert record["triggered_rules"] == ["oracle_quality_target", "max_iterations"]
+    assert m.history[0]["quality_triggered_rules"] == []
+    assert m.history[1]["quality_triggered_rules"] == ["oracle_quality_target"]
+    json.dumps({"record": record, "history": m.history}, allow_nan=False)
+
+
+def test_quality_target_requires_a_complete_checkpoint():
+    m = monitor(target_relative_residual=0.1)
+    assert m.record()["quality_target_met"] is False
+    assert m.finish("target_residual") == "target_residual"
+    assert m.selected_state() == (None, None)
+    record = m.record()
+    assert record["quality_target_met"] is False
+    assert record["selected_iterate_quality_target_met"] is False
+    assert record["terminated_iterate_quality_target_met"] is False
+    assert record["has_complete_checkpoint"] is False
+    assert record["selected_iteration"] is None
+    assert record["reason"] == "target_residual"
+    assert record["triggered_rules"] == ["target_residual"]
 
 
 def test_budgets_checked_before_operator_call():

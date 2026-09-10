@@ -86,6 +86,8 @@ def normal_step(
         raise ValueError("normal_cg does not support column_rms preconditioning")
     if not np.isfinite(rtol) or rtol < 0:
         raise ValueError("rtol must be finite and nonnegative")
+    from scipy.linalg import norm
+
     active = (
         np.ones(current.shape, dtype=bool)
         if roi is None
@@ -97,9 +99,14 @@ def normal_step(
     )
     if not np.isfinite(rhs).all():
         raise FloatingPointError("nonfinite normal-system right-hand side")
+    initial_norm = float(norm(rhs.ravel()))
+    if not np.isfinite(initial_norm):
+        raise FloatingPointError("nonfinite normal-system right-hand side norm")
     solution = np.zeros_like(current)
     direction = rhs.copy()
     rr = float(np.vdot(rhs, rhs).real)
+    if not np.isfinite(rr):
+        raise FloatingPointError("nonfinite squared normal-system right-hand side norm")
     initial_rr = rr
 
     def normal_product(image):
@@ -138,24 +145,35 @@ def normal_step(
     # Recompute rather than reporting only the recursively updated CG residual.
     # An iteration cap is not a certificate that the GN subproblem was solved.
     true_residual = initial_rhs - normal_product(solution) if completed else initial_rhs
-    true_norm = float(np.linalg.norm(true_residual))
+    true_norm = float(norm(true_residual.ravel()))
     if not np.isfinite(true_norm):
         raise FloatingPointError("nonfinite recomputed normal-system residual")
-    denominator = max(np.sqrt(initial_rr), np.finfo(float).tiny)
+    recursive_norm = float(norm(rhs.ravel()))
+    denominator = initial_norm if initial_norm > 0 else 1.0
+    relative = true_norm / denominator
+    # Keep the unscaled CG recurrence, but never certify a squared-norm underflow.
+    squared_residual_underflow = (initial_rr == 0 and initial_norm > 0) or (
+        rr == 0 and recursive_norm > 0
+    )
+    converged = bool(not squared_residual_underflow and relative <= rtol)
+    if converged:
+        stop_reason = "normal_residual_target"
+    elif squared_residual_underflow or rr <= np.finfo(float).tiny:
+        stop_reason = "arithmetic_precision_limit"
+    else:
+        stop_reason = "iteration_limit"
     record = {
         "method": "real_parameter_normal_cg",
         "iterations": completed,
         "iteration_limit": iterations,
-        "recursive_relative_residual": float(np.sqrt(rr) / denominator),
-        "true_relative_residual": true_norm / denominator,
-        "converged": bool(true_norm <= denominator * rtol),
+        "recursive_relative_residual": recursive_norm / denominator,
+        "true_relative_residual": relative,
+        "initial_normal_residual_norm": initial_norm,
+        "physical_normal_residual_norm": true_norm,
+        "converged": converged,
         "rtol": rtol,
         "certificate_scope": "normal_residual_only_not_parameter_accuracy_or_backward_error",
-        "stop_reason": (
-            "normal_residual_target"
-            if true_norm <= denominator * rtol
-            else "iteration_limit"
-        ),
+        "stop_reason": stop_reason,
     }
     if not hasattr(control, "inner_solver_history"):
         control.inner_solver_history = []

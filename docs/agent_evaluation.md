@@ -98,6 +98,13 @@ state. Algorithm loops can record additional reasons such as `line_search_failed
 or `stationary_gradient`. A model-capacity plateau is a valid termination, not
 proof of adequate image quality.
 
+`reason` and `triggered_rules` describe the termination event, not a restored
+earlier image. `quality_target_met` refers to the returned checkpoint and is also
+explicitly named `selected_iterate_quality_target_met`;
+`terminated_iterate_quality_target_met` separately describes the last complete
+iterate. An absent checkpoint cannot meet a target. A data-target stop, including
+`exact_data_fit`, does not certify stationarity of a regularized objective.
+
 `WorkLedger` checks budgets before operator calls. Time limits are enforced
 between calls; an already-running PDE solve cannot be preempted by this Python
 API. Counts include evaluation and line-search calls, and must be accompanied by

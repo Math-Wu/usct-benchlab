@@ -121,6 +121,12 @@ accuracy does not certify an accepted outer step or a good reconstruction.
 Likewise, `exact_data_fit` is a data-target stop, not a certificate that the
 regularized objective gradient vanishes.
 
+The legacy `normal_cg` comparison backend does not have the dynamic scaling of
+the augmented solvers. A nonzero residual whose squared recurrence underflows
+is reported as `arithmetic_precision_limit`, not convergence. Use the augmented
+LSMR/LSQR path for scale-sensitive solves; an unchanged step with this flag is
+not a solved subproblem.
+
 The optional phase seed estimates group delay, not an exact first arrival.
 Aliasing and multipath can remain after its fit-quality checks. Its held-out
 frequencies are not used for phase unwrapping, initialization or physical-length

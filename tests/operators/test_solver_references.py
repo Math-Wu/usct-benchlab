@@ -84,6 +84,36 @@ def test_normal_step_matches_dense_augmented_lstsq(complex_data, penalty):
     assert control.inner_solver_history[-1]["true_relative_residual"] < 1e-7
 
 
+def test_normal_cg_nonzero_squared_rhs_underflow_is_not_convergence():
+    matrix = np.array([[1e-90]])
+    residual = np.array([1e-90])
+    jacobian = DenseJacobian(matrix, (1, 1))
+    rhs = jacobian.adjoint(residual)
+    assert rhs.item() > 0
+    assert np.vdot(rhs, rhs).real == 0
+    # The one-dimensional system has condition number one and exact step one.
+    expected = residual[0] / matrix[0, 0]
+    control = controls(np.ones(1))
+    actual = normal_step(
+        jacobian,
+        residual,
+        np.zeros((1, 1)),
+        control,
+        iterations=8,
+        method="normal_cg",
+    )
+    record = control.inner_solver_history[-1]
+    assert not record["converged"]
+    assert record["stop_reason"] == "arithmetic_precision_limit"
+    assert record["iterations"] == 0
+    assert record["true_relative_residual"] == 1.0
+    assert record["recursive_relative_residual"] == 1.0
+    assert record["initial_normal_residual_norm"] == rhs.item()
+    assert record["physical_normal_residual_norm"] == rhs.item()
+    np.testing.assert_array_equal(actual, 0)
+    assert abs(actual.item() - expected) == 1.0
+
+
 def test_gaussian_postprocessing_can_turn_newton_step_into_ascent():
     # A convex, diagonal quadratic: smoothing a Newton step is not in general
     # equivalent to a positive-definite gradient preconditioner.
