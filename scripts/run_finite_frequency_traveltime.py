@@ -572,7 +572,16 @@ def main():
         print(json.dumps(report), flush=True)
         return
     if args.audit_only:
-        prediction = forward.forward(1 / acquisition.image_speed_mps**2)
+        audit_model = 1 / acquisition.image_speed_mps**2
+        water_model = np.full(case.grid.shape, 1 / 1500**2)
+        linearization = control.call(
+            "audit_linearization", forward.linearize, water_model
+        )
+        linear_prediction = linearization.value + control.call(
+            "audit_jacobian", linearization.jacobian.forward, audit_model - water_model
+        )
+        del linearization
+        prediction = control.call("audit_forward", forward.forward, audit_model)
         report = {
             "band_rmse_ns": [
                 float(
@@ -582,11 +591,22 @@ def main():
                 for k in range(len(bands))
             ],
             "evaluation": control.split.evaluate(prediction, observed.value),
+            "water_linearization": {
+                "model": "F(m_water) + J(m_water) * (m_GT - m_water)",
+                "evaluation": control.split.evaluate(linear_prediction, observed.value),
+                "difference_vs_nonlinear_prediction": control.split.evaluate(
+                    linear_prediction, prediction
+                ),
+                "nonlinear_relinearization_used": False,
+                "ground_truth_role": "forward_attribution_only_not_initialization",
+            },
             "elapsed_s": control.work.elapsed_s,
+            "work": dict(control.work.counts),
         }
         np.savez_compressed(
             args.out / "forward_at_gt.npz",
             prediction_s=prediction,
+            water_linear_prediction_s=linear_prediction,
             observed_s=observed.value,
             valid=valid,
         )
