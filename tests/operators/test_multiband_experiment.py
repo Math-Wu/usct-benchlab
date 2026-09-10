@@ -67,6 +67,15 @@ def test_ring_exclusion_uses_parent_indices_and_preserves_legacy_mask():
     quarter, half = [mask(distance, ids, ids, f) for f in (0.25, 0.5)]
     assert np.all((~quarter).sum(axis=0) == 17)
     assert np.all((~half).sum(axis=0) == 33)
+    # MATLAB FWI uses a per-side fraction; this experiment uses the total arc.
+    half_width = round((63 / 512) * 128)
+    fwi_mask = np.array(
+        [
+            ~np.isin(ids, (source + np.arange(-half_width, half_width + 1)) % 128)
+            for source in ids
+        ]
+    )
+    np.testing.assert_array_equal(quarter, fwi_mask)
     assert np.all(~half | legacy) and np.all(~legacy | quarter)
     np.testing.assert_array_equal(quarter, quarter.T)
     np.testing.assert_array_equal(
