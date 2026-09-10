@@ -52,6 +52,7 @@ def solve_trust_region(
     regularization,
     inner_iterations,
     tv_transition=None,
+    gradient_rtol=None,
 ):
     if "callback" not in inspect.signature(least_squares).parameters:
         raise RuntimeError("experimental TRF requires SciPy >= 1.16 and Python >= 3.11")
@@ -63,6 +64,14 @@ def solve_trust_region(
         raise ValueError("inner_iterations must be a positive integer")
     if not np.isfinite(damping) or damping < 0:
         raise ValueError("damping must be finite and nonnegative")
+    if gradient_rtol is not None and (
+        not np.isfinite(gradient_rtol)
+        or not 0 <= gradient_rtol < 1
+        or 0 < gradient_rtol <= np.finfo(float).eps
+    ):
+        raise ValueError(
+            "gradient_rtol must be zero or between machine epsilon and one; None retains legacy stopping"
+        )
     if (
         len(bounds) != 2
         or not np.isfinite(bounds).all()
@@ -94,11 +103,18 @@ def solve_trust_region(
     shape = initial_state.shape
     model_scale, residual_scale = 1 / 1500**2, 1e6
     train = control.split.train
-    root_weight = np.sqrt(control.precision[train])
     n_data = int(train.sum())
+    # Remove a shared weight scale before square roots and Krylov products.
+    # Reapplying it only for reporting avoids scale-dependent roundoff in IRLS.
+    precision_reference = (
+        float(np.max(control.precision[train]))
+        if gradient_rtol is not None and n_data
+        else 1.0
+    )
+    root_weight = np.sqrt(control.precision[train] / precision_reference)
     reg_shape = regularizer(reference * 0, regularization).shape
     n_residual = n_data + int(np.prod(reg_shape))
-    reg_weight = float(np.sqrt(damping))
+    reg_weight = float(np.sqrt(damping / precision_reference))
     loss = (
         "linear"
         if tv_transition is None
@@ -107,13 +123,24 @@ def solve_trust_region(
 
     def objective(residual):
         if isinstance(loss, str):
-            return float(np.vdot(residual, residual).real / (2 * residual_scale**2))
-        return float(np.sum(loss(residual**2)[0]) / (2 * residual_scale**2))
+            return float(
+                precision_reference
+                * np.vdot(residual, residual).real
+                / (2 * residual_scale**2)
+            )
+        return float(
+            precision_reference * np.sum(loss(residual**2)[0]) / (2 * residual_scale**2)
+        )
 
     cached_x = cached_lin = cached_residual = None
     last_accepted = initial_state.copy()
     result = None
     trial_failures = []
+    initial_optimality = None
+    gradient_reference = None
+    optimality_reference = None
+    previous_objective = None
+    gtol = 1e-6 if gradient_rtol is None else (gradient_rtol or None)
 
     def evaluate(x):
         nonlocal cached_x, cached_lin, cached_residual
@@ -166,6 +193,54 @@ def solve_trust_region(
             (n_residual, reference.size), matvec=mv, rmatvec=rmv, dtype=float
         )
 
+    def diagnostics(x, residual, state, *, initial=False):
+        nonlocal gradient_reference, optimality_reference, previous_objective
+        force = residual if isinstance(loss, str) else loss(residual**2)[1] * residual
+        # Full penalized gradient in dimensionless x coordinates, with the
+        # optimizer's arbitrary residual scaling removed. This adjoint is billed.
+        gradient = jac(x).rmatvec(force) * precision_reference / residual_scale**2
+        lower = 1 / bounds[1] ** 2 / model_scale - 1
+        upper = 1 / bounds[0] ** 2 / model_scale - 1
+        distance = np.where(
+            gradient < 0, upper - x, np.where(gradient > 0, x - lower, 1.0)
+        )
+        gradient_norm = float(np.linalg.norm(gradient))
+        optimality = float(np.max(np.abs(gradient * distance)))
+        if initial:
+            gradient_reference, optimality_reference = gradient_norm, optimality
+        tiny = np.finfo(float).tiny
+        # The projected-gradient mapping is zero at a box-constrained KKT point,
+        # including an active bound with a nonzero unconstrained gradient.
+        projected = x - np.clip(
+            x - gradient / max(gradient_reference, tiny), lower, upper
+        )
+        current_objective = objective(residual)
+        decrease = (
+            None
+            if previous_objective is None
+            else previous_objective - current_objective
+        )
+        record = {
+            "relative_gradient_l2": gradient_norm / max(gradient_reference, tiny),
+            "relative_bound_optimality": optimality / max(optimality_reference, tiny),
+            "projected_gradient_inf": float(np.max(np.abs(projected))),
+            "true_objective_decrease": decrease,
+            "true_objective_relative_decrease": (
+                None
+                if decrease is None
+                else decrease / max(abs(previous_objective), tiny)
+            ),
+            "max_speed_update_mps": (
+                0.0
+                if initial
+                else float(
+                    np.max(np.abs(1 / np.sqrt(state) - 1 / np.sqrt(last_accepted)))
+                )
+            ),
+        }
+        previous_objective = current_objective
+        return record
+
     def callback(intermediate_result):
         nonlocal last_accepted
         state = model_scale * (intermediate_result.x.reshape(shape) + 1)
@@ -181,6 +256,9 @@ def solve_trust_region(
                     / np.linalg.norm(last_accepted)
                 ),
                 sound_speed=1 / np.sqrt(state),
+                optimizer_diagnostics=diagnostics(
+                    intermediate_result.x, residual, state
+                ),
             )
             last_accepted = state.copy()
             if reason is not None:
@@ -195,7 +273,42 @@ def solve_trust_region(
             lin.value,
             objective=objective(residual),
             sound_speed=1 / np.sqrt(initial_state),
+            optimizer_diagnostics=diagnostics(
+                x0, residual, initial_state, initial=True
+            ),
         )
+        if control.monitor.reason is None:
+            if gradient_rtol is not None:
+                force = (
+                    residual
+                    if isinstance(loss, str)
+                    else loss(residual**2)[1] * residual
+                )
+                gradient = jac(x0).rmatvec(force)
+                lower = 1 / bounds[1] ** 2 / model_scale - 1
+                upper = 1 / bounds[0] ** 2 / model_scale - 1
+                # Same Coleman-Li bound distance used by SciPy's TRF gtol.
+                distance = np.where(
+                    gradient < 0, upper - x0, np.where(gradient > 0, x0 - lower, 1.0)
+                )
+                initial_optimality = float(np.max(np.abs(gradient * distance)))
+                if not np.isfinite(initial_optimality):
+                    raise FloatingPointError("nonfinite initial TRF gradient")
+                if initial_optimality > 0:
+                    factor = 1 / np.sqrt(initial_optimality)
+                    residual_scale *= factor
+                    cached_residual *= factor
+                    if (
+                        not np.isfinite(residual_scale)
+                        or not np.isfinite(cached_residual).all()
+                    ):
+                        raise FloatingPointError("TRF gradient normalization overflow")
+                    if tv_transition is not None:
+                        loss = SmoothTVLoss(
+                            n_data, residual_scale * reg_weight * tv_transition
+                        )
+                else:
+                    control.monitor.finish("stationary_gradient")
         if control.monitor.reason is None:
             result = least_squares(
                 fun,
@@ -212,7 +325,7 @@ def solve_trust_region(
                 x_scale=0.02,
                 ftol=1e-8,
                 xtol=1e-8,
-                gtol=1e-6,
+                gtol=gtol,
                 max_nfev=1 + 8 * control.policy.max_iterations,
                 callback=callback,
             )
@@ -237,6 +350,17 @@ def solve_trust_region(
         }
     )
     selected, metrics = control.output(initial_state)
+    selected_iteration = metrics["stopping"]["selected_iteration"]
+    metrics["selected_optimizer_diagnostics"] = next(
+        (
+            row.get("optimizer_diagnostics")
+            for row in control.monitor.history
+            if row["iteration"] == selected_iteration
+        ),
+        None,
+    )
+    metrics["gradient_reference_l2"] = gradient_reference
+    metrics["bound_optimality_reference"] = optimality_reference
     metrics["prior_reference_source"] = (
         "initial" if prior_reference is None else "explicit"
     )
@@ -248,7 +372,20 @@ def solve_trust_region(
         "x_scale": 0.02,
         "ftol": 1e-8,
         "xtol": 1e-8,
-        "gtol": 1e-6,
+        "gtol": gtol,
+        "gradient_rtol": gradient_rtol,
+        "gradient_normalization": (
+            "initial_bound_scaled_full_penalized_gradient"
+            if gradient_rtol is not None
+            else "legacy_absolute_microsecond_residual"
+        ),
+        "initial_optimality_before_normalization": (
+            None
+            if initial_optimality is None
+            else initial_optimality * precision_reference
+        ),
+        "objective_precision_reference": precision_reference,
+        "residual_scale": residual_scale,
         "pixel_speed_step_clip": False,
         "direction_smoothing": False,
         "internal_stopping_may_precede_monitor": True,

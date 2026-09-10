@@ -108,6 +108,7 @@ def setup(max_elapsed_s=None):
 def test_trf_converges_and_ignores_heldout_updates():
     solve = load_solver()
     case, config, observed, truth = setup()
+    config.parameters["stopping"].update(objective_rtol=None, update_rtol=None)
     initial = np.full(case.grid.shape, 1 / 1500**2)
     outputs = []
     for corrupt in (False, True):
@@ -122,10 +123,33 @@ def test_trf_converges_and_ignores_heldout_updates():
             damping=0,
             regularization="laplacian",
             inner_iterations=12,
+            gradient_rtol=1e-8,
         )
         outputs.append(result)
         assert metrics["data_relative_residual"] < 1e-5
         assert metrics["optimizer_terminal"]["optimality"] < 1e-5
+        assert metrics["stop_reason"] == "stationary_gradient"
+        history = metrics["iteration_history"]
+        first = history[0]["optimizer_diagnostics"]
+        assert first["relative_gradient_l2"] == pytest.approx(1)
+        assert first["relative_bound_optimality"] == pytest.approx(1)
+        assert first["true_objective_decrease"] is None
+        for previous, current in zip(history, history[1:]):
+            diagnostic = current["optimizer_diagnostics"]
+            decrease = previous["objective"] - current["objective"]
+            assert diagnostic["true_objective_decrease"] == pytest.approx(decrease)
+            assert diagnostic["true_objective_relative_decrease"] == pytest.approx(
+                decrease / previous["objective"]
+            )
+            assert diagnostic["max_speed_update_mps"] >= 0
+            assert current["relative_update"] >= 0
+        assert (
+            metrics["selected_optimizer_diagnostics"]
+            == history[-1]["optimizer_diagnostics"]
+        )
+        assert history[-1]["optimizer_diagnostics"][
+            "relative_bound_optimality"
+        ] == pytest.approx(metrics["optimizer_terminal"]["optimality"], abs=1e-12)
         np.testing.assert_allclose(
             result[control.split.train[0]], truth[control.split.train[0]], rtol=1e-4
         )
@@ -149,6 +173,82 @@ def test_trf_budget_returns_atomic_fallback():
     np.testing.assert_array_equal(result, initial)
     assert metrics["stopping"]["completed_iterations"] == 0
     assert metrics["optimizer_terminal"] is None
+
+
+@pytest.mark.parametrize("tv", [False, True])
+def test_relative_trf_stopping_is_invariant_to_overall_objective_scale(tv, monkeypatch):
+    from usctbench.operators.model_space import SpatialGradient
+
+    case, config, observed, _ = setup()
+    config.parameters["stopping"].update(
+        max_iterations=40, objective_rtol=None, update_rtol=None
+    )
+    initial = np.full(case.grid.shape, 1 / 1500**2)
+    outputs, reports = [], []
+    module = load_solver_module()
+    scaled_operators = []
+    original_solve = module.least_squares
+
+    def capture(fun, x0, *, callback=None, **kwargs):
+        direction = np.linspace(-1, 1, x0.size)
+        residual = fun(x0).copy()
+        jacobian = kwargs["jac"](x0)
+        scaled_operators.append(
+            (residual, jacobian.matvec(direction), jacobian.rmatvec(residual))
+        )
+        return original_solve(fun, x0, callback=callback, **kwargs)
+
+    monkeypatch.setattr(module, "least_squares", capture)
+    for scale in (1.0, 1e-6, 1e6):
+        control = InversionControl(
+            case,
+            config,
+            observed,
+            default_iterations=40,
+            weights=np.full(observed.shape, scale),
+        )
+        result, metrics = module.solve_trust_region(
+            DiagonalObservation(),
+            control,
+            initial=initial,
+            prior_reference=initial,
+            bounds=(1400, 1600),
+            damping=25 * scale,
+            regularization=SpatialGradient(case.grid, 0.002) if tv else "laplacian",
+            tv_transition=2 * 5 / 1500**3 if tv else None,
+            inner_iterations=32,
+            gradient_rtol=1e-8,
+        )
+        outputs.append(result)
+        reports.append(metrics)
+    for result, metrics, scale in zip(outputs[1:], reports[1:], (1e-6, 1e6)):
+        # ftol=1e-8 can terminate before gtol; do not demand bitwise Krylov paths.
+        np.testing.assert_allclose(
+            1 / np.sqrt(result), 1 / np.sqrt(outputs[0]), rtol=0, atol=1e-3
+        )
+        assert metrics["stop_reason"] == reports[0]["stop_reason"]
+        assert abs(metrics["iterations"] - reports[0]["iterations"]) <= 1
+        np.testing.assert_allclose(
+            metrics["optimizer_settings"]["initial_optimality_before_normalization"]
+            / scale,
+            reports[0]["optimizer_settings"]["initial_optimality_before_normalization"],
+            rtol=1e-12,
+        )
+        np.testing.assert_allclose(
+            metrics["iteration_history"][-1]["objective"] / scale,
+            reports[0]["iteration_history"][-1]["objective"],
+            rtol=1e-8,
+        )
+    for normalized in scaled_operators[1:]:
+        for actual, expected in zip(normalized, scaled_operators[0]):
+            np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-14)
+    for metrics in reports:
+        assert metrics["iteration_history"][0]["optimizer_diagnostics"][
+            "relative_gradient_l2"
+        ] == pytest.approx(1)
+        assert metrics["iteration_history"][0]["optimizer_diagnostics"][
+            "relative_bound_optimality"
+        ] == pytest.approx(1)
 
 
 def test_tv_trf_matches_independent_dense_objective_and_reports_actual_cost(

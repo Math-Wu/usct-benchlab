@@ -77,9 +77,15 @@ class InversionControl:
         objective=None,
         update_relative=None,
         sound_speed=None,
+        optimizer_diagnostics=None,
     ):
         if self.monitor.reason is not None:
             return self.monitor.reason
+        if optimizer_diagnostics is not None and any(
+            value is not None and not np.isfinite(value)
+            for value in optimizer_diagnostics.values()
+        ):
+            return self.monitor.finish("numerical_failure")
         train = residual_statistics(
             prediction, self.observed, mask=self.split.train, weights=self.split.weights
         )
@@ -115,6 +121,10 @@ class InversionControl:
         # A rejected nonfinite state/objective cannot advance the data cache.
         # Its image and its prediction must refer to the same complete iterate.
         if len(self.monitor.history) > previous_history_length:
+            if optimizer_diagnostics is not None:
+                self.monitor.history[-1]["optimizer_diagnostics"] = dict(
+                    optimizer_diagnostics
+                )
             self.last_prediction = np.array(prediction, copy=True)
             if self.monitor.best_iteration != previous_best:
                 self.best_prediction = self.last_prediction.copy()

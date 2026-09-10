@@ -1,6 +1,7 @@
 """Experiment plumbing: portable configs and no held-out initialization leakage."""
 
 import importlib.util
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -114,6 +115,134 @@ def test_nested_acquisitions_share_validation_and_use_mean_training_precision():
         )
 
 
+def test_continuation_uses_selected_result_and_rejects_mismatched_or_failed_input(
+    tmp_path, synthetic_case
+):
+    module = load_experiment()
+    case = synthetic_case
+    nt, nr = len(case.geometry.tx_pos_m), len(case.geometry.rx_pos_m)
+    measured = np.ones((9, nt, nr), complex)
+    water = measured.copy()
+    frequency = np.linspace(80e3, 250e3, 9)
+    control = InversionControl(
+        case, AlgorithmConfig(), np.ones((1, nt, nr)), default_iterations=2
+    )
+    manifest = {
+        "arguments": {
+            "delay_reference": "water",
+            "damping_absolute": 0.02,
+            "prior_reference": "water",
+            "regularization_length_wavelengths": 0.35,
+            "regularization_penalty": "quadratic_laplacian",
+            "tv_transition_mps": 5,
+            "smooth_sigma": 0,
+            "mean_data_loss": False,
+            "model_size": None,
+            "gradient_rtol": 1e-8,
+        },
+        "source_sha256": {"operator": "fixed"},
+    }
+
+    def fingerprint():
+        return module.continuation_identity(
+            case, measured, water, frequency, control, manifest
+        )
+
+    identity = fingerprint()
+    # GT is absent during loading; no metric value selects the initialization.
+    case.ground_truth = None
+    assert fingerprint() == identity
+    measured[0, 0, 0] += 0.1
+    assert fingerprint() != identity
+    measured[0, 0, 0] -= 0.1
+    origin = case.grid.origin_m
+    case.grid.origin_m = (origin[0] + 0.001, origin[1])
+    assert fingerprint() != identity
+    case.grid.origin_m = origin
+    control.precision[0, 0, 0] += 0.5
+    assert fingerprint() != identity
+    control.precision[0, 0, 0] -= 0.5
+    assert fingerprint() == identity
+    split = control.split
+    train = split.train.copy()
+    train[0, 0, 1] = ~train[0, 0, 1]
+    control.split = replace(split, train=train)
+    assert fingerprint() != identity
+    control.split = split
+    manifest["continuation_identity_sha256"] = identity
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    (tmp_path / "metadata.yaml").write_text("source_changed_during_run: false\n")
+    speed = np.full(case.grid.shape, 1493.0)
+    stop = {
+        "termination_category": "budget",
+        "selected_iteration": 1,
+        "completed_iterations": 2,
+        "elapsed_s": 10,
+        "work": {"forward_calls": 4},
+        "ground_truth_used_for_stopping": False,
+    }
+    metrics = {"stop_reason": "max_iterations", "stopping": stop, "rmse": -12345}
+    path = tmp_path / "result.h5"
+
+    def save():
+        write_result_hdf5(
+            ReconstructionResult(
+                algorithm="finite_frequency_traveltime_gn",
+                case_id=case.case_id,
+                sound_speed_mps=speed,
+                metrics=metrics,
+            ),
+            path,
+        )
+
+    save()
+    np.savez(
+        tmp_path / "checkpoint.npz",
+        squared_slowness=np.full(case.grid.shape, 1 / 1600**2),
+    )
+    initial, qc = module.result_initialization(path, case, identity)
+    np.testing.assert_array_equal(initial, 1 / speed**2)
+    assert (
+        qc["source_selected_iteration"] == 1 and qc["source_completed_iterations"] == 2
+    )
+    assert "rmse" not in qc
+    with pytest.raises(ValueError, match="identity mismatch"):
+        module.result_initialization(path, case, "changed split")
+    for key, value in [
+        ("termination_category", "failure"),
+        ("selected_iteration", 0),
+        ("ground_truth_used_for_stopping", True),
+    ]:
+        original = stop[key]
+        stop[key] = value
+        save()
+        with pytest.raises(ValueError, match="refuses"):
+            module.result_initialization(path, case, identity)
+        stop[key] = original
+    for value in (np.nan, 1200, 1800):
+        speed[0, 0] = value
+        if not np.isfinite(value):
+            # Invalid persisted data may originate outside our validated writer.
+            import h5py
+
+            save_speed = np.full(case.grid.shape, 1493.0)
+            write_result_hdf5(
+                ReconstructionResult(
+                    algorithm="finite_frequency_traveltime_gn",
+                    case_id=case.case_id,
+                    sound_speed_mps=save_speed,
+                    metrics=metrics,
+                ),
+                path,
+            )
+            with h5py.File(path, "r+") as handle:
+                handle["sound_speed_mps"][0, 0] = value
+        else:
+            save()
+        with pytest.raises(ValueError, match="physical bounds"):
+            module.result_initialization(path, case, identity)
+
+
 def test_ring_exclusion_uses_parent_indices_and_preserves_legacy_mask():
     mask = load_experiment().ring_pair_mask
     ids = np.arange(0, 128, 2)
@@ -212,6 +341,29 @@ def test_direct_observed_correlation_chain_and_channel_locality():
     predicted = measured * np.exp(2j * np.pi * f[:, None, None] * 0.4e-6)
     lin = observation.linearize(predicted)
     np.testing.assert_allclose(lin.value - offset, 0.4e-6, atol=1e-15)
+    train = np.ones(offset.shape, bool)
+    train[:, :, 2] = False
+    split = SimpleNamespace(train=train, validation=~train)
+    report = module.common_observable_evaluation(predicted, measured, base, base, split)
+    for subset in report.values():
+        for metric in ("water_peak_difference", "direct_correlation_lag"):
+            assert subset[metric]["rmse_us_all_requested"] == pytest.approx(0.4)
+            assert subset[metric]["invalid_fraction"] == 0
+    identity = module.common_observable_evaluation(
+        measured, measured, base, base, split
+    )
+    assert identity["validation"]["water_calibrated_pressure_relative_residual"] == 0
+    assert (
+        identity["validation"]["direct_correlation_lag"]["rmse_us_all_requested"] < 1e-8
+    )
+    invalid = predicted.copy()
+    invalid[:, :, 2] = 0
+    failed = module.common_observable_evaluation(invalid, measured, base, base, split)
+    assert failed["train"] == report["train"]
+    assert failed["validation"]["direct_correlation_lag"]["invalid_fraction"] == 1
+    assert (
+        failed["validation"]["direct_correlation_lag"]["rmse_us_all_requested"] is None
+    )
     rng = np.random.default_rng(21)
     dp = rng.normal(size=water.shape) + 1j * rng.normal(size=water.shape)
     h = 1e-5

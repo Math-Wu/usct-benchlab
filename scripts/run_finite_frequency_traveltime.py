@@ -9,6 +9,7 @@ diagnostic. See --help; output must be a fresh directory outside the repository.
 import argparse
 from dataclasses import replace
 import hashlib
+import io
 import json
 from pathlib import Path
 import time
@@ -114,6 +115,71 @@ def physical_regularization(length_wavelengths, maximum_frequency, spacing):
     return tuple(float((length_m / h) ** 2) for h in spacing)
 
 
+def common_observable_evaluation(
+    predicted, measured, water_picker, direct_picker, split
+):
+    """Post-hoc cross-score a selected model on fixed, observation-only masks.
+
+    Inputs are pressure ratios to independent water references. No refitting,
+    peak-dependent mask selection, or use of GT is permitted here.
+    """
+    observed = water_picker.linearize(measured)
+    picked = water_picker.linearize(predicted)
+    direct = direct_picker.linearize(predicted * measured.conj())
+    report = {}
+    for name, mask in (("train", split.train), ("validation", split.validation)):
+        mask = np.asarray(mask, bool)
+        pairs = np.any(mask, axis=0)
+        item = {
+            "pair_count": int(pairs.sum()),
+            "mask_sha256": hashlib.sha256(mask.tobytes()).hexdigest(),
+        }
+        for key, difference, valid in (
+            (
+                "water_peak_difference",
+                picked.value - observed.value,
+                picked.valid & observed.valid,
+            ),
+            ("direct_correlation_lag", direct.value, direct.valid),
+        ):
+            accepted = mask & valid & np.isfinite(difference)
+            item[key] = {
+                "requested_count": int(mask.sum()),
+                "valid_count": int(accepted.sum()),
+                "invalid_fraction": (
+                    float(1 - accepted.sum() / mask.sum()) if mask.any() else None
+                ),
+                "rmse_us_valid_only": (
+                    float(1e6 * np.sqrt(np.mean(difference[accepted] ** 2)))
+                    if accepted.any()
+                    else None
+                ),
+                "rmse_us_all_requested": (
+                    float(1e6 * np.sqrt(np.mean(difference[mask] ** 2)))
+                    if mask.any() and np.all(accepted[mask])
+                    else None
+                ),
+            }
+        error = np.linalg.norm((predicted - measured)[:, pairs])
+        for key, denominator in (
+            (
+                "water_calibrated_pressure_relative_residual",
+                np.linalg.norm(measured[:, pairs]),
+            ),
+            (
+                "water_calibrated_scattered_relative_residual",
+                np.linalg.norm((measured - 1)[:, pairs]),
+            ),
+        ):
+            item[key] = (
+                float(error / denominator)
+                if denominator > 0 and np.isfinite(error)
+                else None
+            )
+        report[name] = item
+    return report
+
+
 def regularization_weight(diagonal, ratio, absolute=None):
     """Allow changing observations without implicitly changing the prior weight."""
     value = ratio if absolute is None else absolute
@@ -126,6 +192,102 @@ def regularization_weight(diagonal, ratio, absolute=None):
     if not np.isfinite(diagonal).all() or not positive.size:
         raise ValueError("cannot scale regularization without finite sensitivity")
     return float(ratio * np.median(positive))
+
+
+def continuation_identity(case, measured, water, frequencies, control, manifest):
+    """Bind a staged solve to its physical data, split, prior and numerical model."""
+    settings = manifest["arguments"]
+    fixed = {
+        key: settings[key]
+        for key in (
+            "delay_reference",
+            "damping_absolute",
+            "prior_reference",
+            "regularization_length_wavelengths",
+            "regularization_penalty",
+            "tv_transition_mps",
+            "smooth_sigma",
+            "mean_data_loss",
+            "model_size",
+            "gradient_rtol",
+        )
+    }
+    fixed["source_sha256"] = manifest["source_sha256"]
+    digest = hashlib.sha256(json.dumps(fixed, sort_keys=True).encode())
+    arrays = [
+        case.grid.shape,
+        case.grid.spacing_m,
+        case.grid.origin_m,
+        case.geometry.tx_pos_m,
+        case.geometry.rx_pos_m,
+        frequencies,
+        measured,
+        water,
+    ]
+    for mask in (control.split.train, control.split.validation):
+        if not np.array_equal(mask.any(axis=0), mask.all(axis=0)):
+            raise ValueError("continuation requires the same pair mask in every band")
+        arrays.append(mask.all(axis=0))
+    arrays.append(control.precision.sum(axis=0))
+    for value in arrays:
+        array = np.ascontiguousarray(value)
+        digest.update(json.dumps([array.dtype.str, array.shape]).encode())
+        digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def result_initialization(path, case, identity, *, bounds=(1300, 1700)):
+    """Read the selected final image, not the possibly different last checkpoint."""
+    previous = json.loads((path.parent / "manifest.json").read_text())
+    if previous.get("continuation_identity_sha256") != identity:
+        raise ValueError("continuation data/grid/split/prior identity mismatch")
+    provenance = yaml.safe_load((path.parent / "metadata.yaml").read_text())
+    if provenance.get("source_changed_during_run") is not False:
+        raise ValueError("continuation requires verified unchanged numerical source")
+    snapshot = path.read_bytes()
+    with h5py.File(io.BytesIO(snapshot)) as handle:
+        if (
+            handle.attrs.get("record_type") != "ReconstructionResult"
+            or handle.attrs.get("algorithm") != "finite_frequency_traveltime_gn"
+            or handle.attrs.get("case_id") != case.case_id
+            or handle.attrs.get("status") != "success"
+        ):
+            raise ValueError("continuation requires a matching finite-frequency result")
+        speed = np.asarray(handle["sound_speed_mps"])
+        metrics = json.loads(handle.attrs["metrics_json"])
+    stop = metrics.get("stopping", {})
+    if (
+        stop.get("termination_category")
+        not in {"budget", "stagnation", "quality_target"}
+        or stop.get("selected_iteration", 0) < 1
+        or stop.get("ground_truth_used_for_stopping") is not False
+        or metrics.get("stop_reason")
+        in {"numerical_failure", "line_search_failed", "linear_solver_breakdown"}
+    ):
+        raise ValueError(
+            "continuation refuses failed, unstarted or GT-selected results"
+        )
+    if (
+        speed.shape != case.grid.shape
+        or np.iscomplexobj(speed)
+        or not np.isfinite(speed).all()
+        or np.any(speed < bounds[0])
+        or np.any(speed > bounds[1])
+    ):
+        raise ValueError("continuation speed must match the grid and physical bounds")
+    return 1 / speed**2, {
+        "method": "selected_completed_result",
+        "source_result": str(path.resolve()),
+        "source_result_sha256": hashlib.sha256(snapshot).hexdigest(),
+        "continuation_identity_sha256": identity,
+        "source_stop_reason": metrics["stop_reason"],
+        "source_selected_iteration": stop["selected_iteration"],
+        "source_completed_iterations": stop["completed_iterations"],
+        "source_budget_elapsed_s": stop["elapsed_s"],
+        "source_work": stop["work"],
+        "source_initialization": metrics.get("initialization_qc"),
+        "ground_truth_used": False,
+    }
 
 
 def ring_pair_mask(distance, tx_indices, rx_indices, fraction=None, *, elements=128):
@@ -366,7 +528,7 @@ def main():
         "--gradient-rtol",
         type=float,
         default=1e-8,
-        help="GN regularized gradient norm relative to its initial norm",
+        help="regularized gradient tolerance relative to initial gradient (TRF uses bound scaling); zero disables",
     )
     parser.add_argument("--seconds", type=float, default=7200)
     damping_group = parser.add_mutually_exclusive_group()
@@ -396,7 +558,12 @@ def main():
         help="smooth-TV transition, converted to squared slowness at 1500 m/s",
     )
     parser.add_argument(
-        "--initialization", choices=("water", "phase_cgls"), default="water"
+        "--initialization", choices=("water", "phase_cgls", "result"), default="water"
+    )
+    parser.add_argument(
+        "--initial-result",
+        type=Path,
+        help="previous selected result.h5; requires result initialization, fixed water prior and absolute damping",
     )
     parser.add_argument(
         "--prior-reference",
@@ -421,6 +588,18 @@ def main():
     )
     parser.add_argument("--gpu", type=int, help="optional CuPy device; CPU by default")
     args = parser.parse_args()
+    if (args.initial_result is not None) != (args.initialization == "result"):
+        parser.error("initial-result requires initialization=result, and vice versa")
+    if args.initial_result is not None and (
+        args.prior_reference != "water"
+        or args.damping_absolute is None
+        or args.audit_only
+        or args.kernel_only
+        or args.solver_audit_checkpoint is not None
+    ):
+        parser.error(
+            "result initialization requires inversion with fixed absolute damping and water prior"
+        )
     if args.audit_gradient_steps is not None and (
         args.solver_audit_checkpoint is None
         or args.skip_gradient_fd
@@ -469,6 +648,9 @@ def main():
     if (
         not np.isfinite(damping_input)
         or damping_input < 0
+        or not np.isfinite(args.gradient_rtol)
+        or not 0 <= args.gradient_rtol < 1
+        or 0 < args.gradient_rtol <= np.finfo(float).eps
         or not 0 <= args.minimum_peak_gap < 1
         or not np.isfinite(args.smooth_sigma)
         or args.smooth_sigma < 0
@@ -570,6 +752,7 @@ def main():
     observation = BandCorrelationDelay(
         frequencies, np.where(pair_valid[None], water, 0), bands, lower, upper
     )
+    water_picker = observation
     ratio = np.divide(
         measured, water, out=np.zeros_like(water), where=np.abs(water) > 0
     )
@@ -598,16 +781,16 @@ def main():
     if args.shared_64_validation:
         valid, evaluation = shared_channel_validation(valid, tx, rx)
     weights = valid.astype(float) / len(bands)
+    relative_base = BandCorrelationDelay(
+        frequencies,
+        np.where(pair_valid[None], water, 0),
+        bands,
+        lower - upper,
+        upper - lower,
+    )
     if args.delay_reference == "observed":
         # Relative delay between two admissible media; bounds use no observed
         # values or GT and therefore cannot couple training/validation channels.
-        relative_base = BandCorrelationDelay(
-            frequencies,
-            np.where(pair_valid[None], water, 0),
-            bands,
-            lower - upper,
-            upper - lower,
-        )
         observation = ObservedCorrelationDelay(relative_base, ratio, observed.value)
     manifest = {
         "arguments": {
@@ -693,6 +876,9 @@ def main():
         if args.shared_64_validation
         else "seeded_receiver_fraction"
     )
+    manifest["continuation_identity_sha256"] = continuation_identity(
+        case, measured, water, frequencies, control, manifest
+    )
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2))
     np.savez_compressed(
         args.out / "observations.npz",
@@ -703,6 +889,8 @@ def main():
         peak_gap=observed.peak_gap,
         stationarity_error_s=observed.stationarity_error_s,
         local_concavity_margin=observed.local_concavity_margin,
+        train_mask=control.split.train,
+        validation_mask=control.split.validation,
     )
     reference = RayBornOperator(case.grid, case.geometry, frequencies).background_data()
     pressure = RayBornForward(
@@ -799,6 +987,10 @@ def main():
     if args.initialization == "phase_cgls":
         initial, initialization_qc = phase_initialization(
             case, measured, water, frequencies, distance, control, args
+        )
+    elif args.initialization == "result":
+        initial, initialization_qc = result_initialization(
+            args.initial_result, case, manifest["continuation_identity_sha256"]
         )
     prior = (
         initial.copy()
@@ -942,7 +1134,11 @@ def main():
         from _finite_frequency_trf import solve_trust_region
 
         selected, metrics = solve_trust_region(
-            forward, control, **solver_parameters, tv_transition=tv_transition
+            forward,
+            control,
+            **solver_parameters,
+            tv_transition=tv_transition,
+            gradient_rtol=args.gradient_rtol,
         )
     else:
         selected, metrics = nonlinear_least_squares(
@@ -992,6 +1188,38 @@ def main():
             }
         )
     )
+    # Recompute at the validation-selected model, never the last trial cache.
+    # Assessment is outside optimization and cannot affect its selected state.
+    assessment_start = time.perf_counter()
+    pressure.budget_check = None
+    try:
+        predicted_ratio = pressure.linearize(1 / speed**2).value / reference
+        assessment = common_observable_evaluation(
+            predicted_ratio, ratio, water_picker, relative_base, control.split
+        )
+        assessment.update(
+            status="success",
+            selected_iteration=metrics["stopping"]["selected_iteration"],
+            result_sha256=hashlib.sha256(
+                (args.out / "result.h5").read_bytes()
+            ).hexdigest(),
+            scope="posthoc_not_used_for_stopping_or_selection",
+            extra_pressure_forward_calls=1,
+            elapsed_s=time.perf_counter() - assessment_start,
+        )
+        np.savez_compressed(
+            args.out / "selected_pressure_ratios.npz",
+            predicted=predicted_ratio,
+            observed=ratio,
+            frequencies_hz=frequencies,
+        )
+    except (FloatingPointError, RuntimeError) as exc:
+        assessment = {
+            "status": "failed",
+            "error": str(exc),
+            "elapsed_s": time.perf_counter() - assessment_start,
+        }
+    (args.out / "common_evaluation.json").write_text(json.dumps(assessment, indent=2))
     fig, axes = plt.subplots(1, 2, figsize=(8, 4), layout="constrained")
     gt = case.ground_truth.sound_speed_mps
     for ax, image, name in zip(
