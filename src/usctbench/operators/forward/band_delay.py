@@ -107,11 +107,15 @@ class BandCorrelationDelay:
         self.power = np.divide(power, total, out=np.zeros_like(power), where=total > 0)
         self.base_valid = np.sum(power > 0, axis=1) >= 3
         step = 1 / (oversample * self.frequencies_hz[-1])
-        count = int(np.ceil((self.upper.max() - self.lower.min()) / step)) + 3
+        first = int(np.floor(self.lower.min() / step)) - 1
+        last = int(np.ceil(self.upper.max() / step)) + 1
+        count = last - first + 1
         if count > 20000:
             raise ValueError("delay range too large for bounded correlation")
-        self.lags = np.linspace(self.lower.min() - step, self.upper.max() + step, count)
-        self.step = self.lags[1] - self.lags[0]
+        # A fixed lattice preserves a pair's sampling/refinement and concavity
+        # certificate when unrelated receivers expand the global delay bounds.
+        self.lags = np.arange(first, last + 1) * step
+        self.step = step
         self.phasors = np.exp(-1j * self.lags[:, None] * self.omega[None])
 
     def _refined_peaks(self, correlation, weighted_ratio, lo, hi):

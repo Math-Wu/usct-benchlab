@@ -253,6 +253,41 @@ def test_bounds_bad_channels_and_receiver_locality():
         BandCorrelationDelay(
             op.frequencies_hz, ratio, np.ones((1, len(op.omega))), 1, 0
         )
+    # Receiver extension must not change a pre-existing pair's lag lattice or
+    # peak QC, even when the new receiver expands the global physical bounds.
+    water = np.ones((len(op.omega), 1, 2), complex)
+    single = BandCorrelationDelay(
+        op.frequencies_hz,
+        water[:, :, :1],
+        np.ones((1, len(op.omega))),
+        -3.13e-6,
+        4.77e-6,
+    )
+    extended = BandCorrelationDelay(
+        op.frequencies_hz,
+        water,
+        np.ones((1, len(op.omega))),
+        [[-3.13e-6, -8.42e-6]],
+        [[4.77e-6, 11.14e-6]],
+    )
+    ratio = water * np.exp(1j * op.omega[:, None, None] * 0.731e-6)
+    before, after = single.linearize(ratio[:, :, :1]), extended.linearize(ratio)
+    assert single.step == extended.step
+    for field in (
+        "value",
+        "valid",
+        "coherence",
+        "peak_gap",
+        "stationarity_error_s",
+        "local_concavity_margin",
+        "coefficient",
+    ):
+        np.testing.assert_allclose(
+            getattr(before, field),
+            getattr(after, field)[..., :1],
+            atol=1e-20,
+            rtol=1e-12,
+        )
 
 
 def test_sparse_frequency_grid_creates_late_sensitivity_replicas():
