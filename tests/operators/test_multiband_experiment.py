@@ -57,6 +57,63 @@ def test_fixed_regularization_weight_does_not_follow_band_sensitivity():
         select(np.zeros(3), 0.02)
 
 
+def test_nested_acquisitions_share_validation_and_use_mean_training_precision():
+    from usctbench.evaluation.data import make_data_split
+
+    module = load_experiment()
+    controls = []
+    for stride in (2, 1):
+        parent = np.arange(0, 128, stride)
+        positions = np.column_stack(
+            [np.sin(parent * np.pi / 64), np.cos(parent * np.pi / 64)]
+        )
+        distance = np.linalg.norm(positions[:, None] - positions[None], axis=-1)
+        valid = np.broadcast_to(
+            distance > 0.5 * distance.max(), (1, len(parent), len(parent))
+        )
+        valid, evaluation = module.shared_channel_validation(valid, parent, parent)
+        split = make_data_split(
+            np.ones(valid.shape),
+            valid_mask=valid,
+            tx_positions=positions,
+            rx_positions=positions,
+            **evaluation,
+        )
+        assert parent[split.metadata["receiver_indices"]].tolist() == [
+            10,
+            52,
+            76,
+            88,
+            106,
+            120,
+            124,
+            126,
+        ]
+        control = SimpleNamespace(
+            split=split, precision=np.where(split.train, split.weights, 0)
+        )
+        before = control.precision.copy()
+        divisor = module.normalize_training_weight(control)
+        split = control.split
+        assert divisor == split.train.sum()
+        np.testing.assert_allclose(control.precision.sum(), 1)
+        np.testing.assert_allclose(control.precision * divisor, before)
+        np.testing.assert_array_equal(control.precision[~split.train], 0)
+        assert np.all(split.weights[split.validation] == 1 / divisor)
+        controls.append(control)
+    low, full = [control.split for control in controls]
+    np.testing.assert_array_equal(low.validation, full.validation[:, ::2, ::2])
+    np.testing.assert_array_equal(low.train, full.train[:, ::2, ::2])
+    assert low.validation.sum() == full.validation.sum()
+    assert not full.validation[:, 1::2].any()
+    assert not full.train[:, [10, 52, 76, 88, 106, 120, 124, 126]].any()
+    assert full.train[:, 1::2, 1::2].any()
+    with pytest.raises(ValueError, match="reference receivers"):
+        module.shared_channel_validation(
+            np.ones((1, 64, 64), bool), np.arange(1, 128, 2), np.arange(1, 128, 2)
+        )
+
+
 def test_ring_exclusion_uses_parent_indices_and_preserves_legacy_mask():
     mask = load_experiment().ring_pair_mask
     ids = np.arange(0, 128, 2)

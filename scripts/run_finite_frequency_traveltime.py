@@ -7,6 +7,7 @@ diagnostic. See --help; output must be a fresh directory outside the repository.
 """
 
 import argparse
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -163,6 +164,37 @@ def ring_pair_mask(distance, tx_indices, rx_indices, fraction=None, *, elements=
     return (separation > fraction * elements / 2) & (distance > 0)
 
 
+def shared_channel_validation(valid, tx_parent, rx_parent):
+    """Same physical validation pairs for nested 64/128 acquisitions.
+
+    New transmitters remain usable in training, but not against validation
+    receivers. Reciprocal exclusion is subsequently enforced by DataSplit.
+    """
+    receivers = np.sort(
+        np.random.default_rng(42).choice(np.arange(0, 128, 2), 8, replace=False)
+    )
+    if not np.isin(receivers, rx_parent).all():
+        raise ValueError("shared validation requires all reference receivers")
+    common_tx = np.asarray(tx_parent) % 2 == 0
+    heldout_rx = np.isin(rx_parent, receivers)
+    keep = common_tx[:, None] | ~heldout_rx[None]
+    return valid & keep, {
+        "receiver_indices": np.flatnonzero(heldout_rx).tolist(),
+        "seed": 42,
+        "exclude_reciprocal": True,
+    }
+
+
+def normalize_training_weight(control):
+    """Mean training data loss; apply the same scale to validation reporting."""
+    total = float(control.precision.sum())
+    if not np.isfinite(total) or total <= 0:
+        raise ValueError("require a positive finite training weight sum")
+    control.split = replace(control.split, weights=control.split.weights / total)
+    control.precision = control.precision / total
+    return total
+
+
 def phase_initialization(case, measured, water, frequencies, distance, control, args):
     """Reuse the existing rWave phase-CGLS recipe, with this run's training split."""
     from types import SimpleNamespace
@@ -253,6 +285,29 @@ def main():
         "--delay-reference", choices=("water", "observed"), default="water"
     )
     parser.add_argument("--tx-stride", type=int, default=2, choices=(1, 2, 4, 8))
+    parser.add_argument(
+        "--ring-stride",
+        type=int,
+        choices=(1, 2),
+        default=2,
+        help="parent 128-ring sampling: 2 gives 64 RX, 1 gives 128 RX; TX also uses tx-stride",
+    )
+    parser.add_argument(
+        "--shared-64-validation",
+        action="store_true",
+        help="same even-parent TX and eight physical held-out RX in 64/128 comparisons",
+    )
+    parser.add_argument(
+        "--mean-data-loss",
+        action="store_true",
+        help="normalize training precision to sum one; use an explicitly scaled prior coefficient",
+    )
+    parser.add_argument(
+        "--green-cache-gib",
+        type=float,
+        default=4,
+        help="field cache budget per CPU/GPU copy; 128-channel runs may require 8 GiB or more",
+    )
     parser.add_argument(
         "--exclude-neighbor-fraction",
         type=float,
@@ -430,6 +485,10 @@ def main():
         or not 0 <= args.exclude_neighbor_fraction < 1
     ):
         parser.error("exclude-neighbor-fraction must be in [0, 1)")
+    if not np.isfinite(args.green_cache_gib) or args.green_cache_gib <= 0:
+        parser.error("green-cache-gib must be finite and positive")
+    if args.mean_data_loss and args.damping_absolute is None:
+        parser.error("mean-data-loss requires damping-absolute in mean-loss units")
     args.out.mkdir(parents=True, exist_ok=False)
     (args.out / "executed_experiment.py").write_bytes(executed_source)
     helper_hash = None
@@ -454,7 +513,8 @@ def main():
         case.ground_truth.sound_speed_mps, acquisition.image_speed_mps
     ):
         raise ValueError("property map identity mismatch")
-    tx, rx = np.arange(0, 128, 2 * args.tx_stride), np.arange(0, 128, 2)
+    tx = np.arange(0, 128, args.ring_stride * args.tx_stride)
+    rx = np.arange(0, 128, args.ring_stride)
     case.geometry = GeometrySpec(
         tx_pos_m=acquisition.positions_yx_m[tx], rx_pos_m=acquisition.positions_yx_m[rx]
     )
@@ -529,6 +589,13 @@ def main():
         axis=0,
     )
     valid = np.broadcast_to(common_pairs, observed.value.shape).copy()
+    evaluation = {
+        "receiver_fraction": 0.125,
+        "seed": 42,
+        "exclude_reciprocal": True,
+    }
+    if args.shared_64_validation:
+        valid, evaluation = shared_channel_validation(valid, tx, rx)
     weights = valid.astype(float) / len(bands)
     if args.delay_reference == "observed":
         # Relative delay between two admissible media; bounds use no observed
@@ -586,17 +653,6 @@ def main():
             for p in (repo / "src/usctbench").rglob("*.py")
         },
     }
-    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    np.savez_compressed(
-        args.out / "observations.npz",
-        delay_s=observed.value,
-        valid=valid,
-        weights=weights,
-        coherence=observed.coherence,
-        peak_gap=observed.peak_gap,
-        stationarity_error_s=observed.stationarity_error_s,
-        local_concavity_margin=observed.local_concavity_margin,
-    )
     print("prepared", args.bands, "valid", manifest["valid_fraction"], flush=True)
     if valid.sum() < 32:
         raise ValueError("too few reliable band observations")
@@ -608,11 +664,7 @@ def main():
             "update_rtol": 1e-7,
             "objective_rtol": 1e-6,
         },
-        "evaluation": {
-            "receiver_fraction": 0.125,
-            "seed": 42,
-            "exclude_reciprocal": True,
-        },
+        "evaluation": evaluation,
         "roi_update_only": False,
     }
     config = AlgorithmConfig(
@@ -628,6 +680,29 @@ def main():
         iteration_unit="finite-frequency traveltime accepted outer step",
         out=args.out,
     )
+    weight_divisor = normalize_training_weight(control) if args.mean_data_loss else 1.0
+    manifest["training_weight_divisor"] = weight_divisor
+    manifest["weight_policy"] = (
+        "uniform pairs/band count; sum training precision equals one; not noise precision"
+        if args.mean_data_loss
+        else manifest["weight_policy"]
+    )
+    manifest["validation_protocol"] = (
+        "shared_even_parent_TX_and_eight_parent_RX"
+        if args.shared_64_validation
+        else "seeded_receiver_fraction"
+    )
+    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    np.savez_compressed(
+        args.out / "observations.npz",
+        delay_s=observed.value,
+        valid=valid,
+        weights=weights / weight_divisor,
+        coherence=observed.coherence,
+        peak_gap=observed.peak_gap,
+        stationarity_error_s=observed.stationarity_error_s,
+        local_concavity_margin=observed.local_concavity_margin,
+    )
     reference = RayBornOperator(case.grid, case.geometry, frequencies).background_data()
     pressure = RayBornForward(
         case.grid,
@@ -636,7 +711,7 @@ def main():
         green_backend="volume_integral",
         green_solver_rtol=1e-6,
         green_solver_maxiter=30,
-        max_cache_bytes=4 * 2**30,
+        max_cache_bytes=int(args.green_cache_gib * 2**30),
         budget_check=control.work.check_time,
         green_device=args.gpu,
     )
