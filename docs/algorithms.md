@@ -137,5 +137,35 @@ on the accumulated image. Lower smoothing is not automatically better: the
 measured validation record contains counterexamples with smaller residuals and
 worse SSIM.
 
+### Optional finite-frequency TV penalty
+
+The finite-frequency experiment can use `--optimizer trf` and
+`--regularization-penalty smooth_tv`, with a positive
+`--regularization-length-wavelengths` and damping.
+This changes the inverse regularization, not the pressure data or registered ray
+algorithms. The default remains the quadratic Laplacian. It minimizes
+
+$$
+\frac12\sum_{j\in\mathrm{train}}w_j|F_j(m)-d_j|^2
++\lambda\epsilon^2\sum_e\left(\sqrt{1+
+\left(\frac{[D_\ell(m-m_0)]_e}{\epsilon}\right)^2}-1\right).
+$$
+
+Here $m=c^{-2}$, $D_\ell$ is the first difference multiplied by
+$\ell/\Delta y$ or $\ell/\Delta x$, and only interior edges are included.
+This is a discrete **smooth anisotropic TV** penalty, not post-filtering and not
+a claim of grid-independent regularization. A reduced model retains this same
+fine-grid penalty and its exact transpose. No GT support is inferred.
+
+`--tv-transition-mps` (positive float, default 5) specifies
+$\epsilon=2v_{\mathrm{transition}}/1500^3$: a reference-speed conversion for the
+scaled gradient, not an exact nonlinear speed difference. Changing it also
+changes the large-gradient penalty strength. The Laplacian and TV coefficients
+are not interchangeable tuning optima. Actual penalty parameters and objective
+values are recorded; data rows remain quadratic. The implementation uses
+[SciPy's TRF loss interface](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.least_squares.html).
+TV also appears in [finite-frequency USCT reconstruction](https://arxiv.org/html/1908.03302v1),
+but this option is not a reproduction of that paper's full acquisition or solver.
+
 See [operator_contract.md](operator_contract.md) for numerical conventions and
 [physics_validation.md](physics_validation.md) for tests, references and evidence.

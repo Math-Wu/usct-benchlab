@@ -12,7 +12,7 @@ from __future__ import annotations
 from functools import cached_property
 
 import numpy as np
-from scipy.sparse import csr_array, kron
+from scipy.sparse import csr_array, diags, eye, kron, vstack
 
 from usctbench.core.schema import GridSpec
 
@@ -134,8 +134,55 @@ class ReducedLinearOperator:
         )
 
 
+class SpatialGradient:
+    """Dimensionless ell * gradient on interior edges, with its exact transpose.
+
+    Edges use [row=y, col=x] spacing. No differences against an artificial
+    zero-valued exterior are added, so a constant image has zero penalty.
+    """
+
+    def __init__(self, grid: GridSpec, length_m: float):
+        if not np.isfinite(length_m) or length_m <= 0:
+            raise ValueError("gradient length_m must be finite and positive")
+        self.grid, self.length_m = grid, float(length_m)
+        ny, nx = grid.shape
+
+        def difference(n, spacing):
+            if n == 1:
+                return csr_array((0, 1))
+            return diags(
+                [-np.ones(n - 1), np.ones(n - 1)], [0, 1], shape=(n - 1, n)
+            ) * (length_m / spacing)
+
+        self.matrix = csr_array(
+            vstack(
+                [
+                    kron(difference(ny, grid.spacing_m[0]), eye(nx)),
+                    kron(eye(ny), difference(nx, grid.spacing_m[1])),
+                ],
+                format="csr",
+            )
+        )
+
+    def forward(self, image):
+        a = np.asarray(image)
+        if a.shape != self.grid.shape or np.iscomplexobj(a) or not np.isfinite(a).all():
+            raise ValueError("gradient input must be a finite real image")
+        return np.asarray(self.matrix @ a.ravel())
+
+    def adjoint(self, edges):
+        a = np.asarray(edges)
+        if (
+            a.shape != (self.matrix.shape[0],)
+            or np.iscomplexobj(a)
+            or not np.isfinite(a).all()
+        ):
+            raise ValueError("gradient adjoint input must be a finite real edge vector")
+        return np.asarray(self.matrix.T @ a).reshape(self.grid.shape)
+
+
 class FineGridRegularizer:
-    """L B with transpose B^T L^T; L is the existing symmetric fine-grid L."""
+    """L B with transpose B^T L^T, including rectangular fine-grid penalties."""
 
     def __init__(self, basis, kind):
         self.basis, self.kind = basis, kind
@@ -148,4 +195,9 @@ class FineGridRegularizer:
     def adjoint(self, values):
         from usctbench.solvers.least_squares import regularizer
 
-        return self.basis.adjoint(regularizer(values, self.kind))
+        transposed = (
+            self.kind.adjoint(values)
+            if hasattr(self.kind, "adjoint")
+            else regularizer(values, self.kind)
+        )
+        return self.basis.adjoint(transposed)

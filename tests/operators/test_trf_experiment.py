@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, minimize
 
 from usctbench.algorithms._control import InversionControl
 from usctbench.core.schema import (
@@ -24,12 +24,29 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def load_solver():
+def load_solver_module():
     path = Path(__file__).resolve().parents[2] / "scripts/_finite_frequency_trf.py"
     spec = importlib.util.spec_from_file_location("finite_frequency_trf", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.solve_trust_region
+    return module
+
+
+def load_solver():
+    return load_solver_module().solve_trust_region
+
+
+def test_tv_loss_preserves_data_rows_and_has_consistent_derivatives():
+    loss = load_solver_module().SmoothTVLoss(2, 0.2)
+    z = np.array([0.2, 4.0, 1e-8, 0.3, 100.0])
+    rho = loss(z)
+    np.testing.assert_array_equal(rho[:, :2], np.array([z[:2], [1.0, 1.0], [0.0, 0.0]]))
+    h = z * 1e-5
+    difference = (loss(z + h) - loss(z - h)) / (2 * h)
+    np.testing.assert_allclose(difference[0], rho[1], rtol=1e-8, atol=1e-12)
+    np.testing.assert_allclose(difference[1], rho[2], rtol=1e-3, atol=1e-8)
+    np.testing.assert_array_equal(loss(np.zeros(5))[0], 0)
+    assert np.all(rho[0, 2:] < z[2:])
 
 
 class DiagonalObservation:
@@ -131,6 +148,72 @@ def test_trf_budget_returns_atomic_fallback():
     np.testing.assert_array_equal(result, initial)
     assert metrics["stopping"]["completed_iterations"] == 0
     assert metrics["optimizer_terminal"] is None
+
+
+def test_tv_trf_matches_independent_dense_objective_and_reports_actual_cost():
+    from usctbench.operators.model_space import SpatialGradient
+
+    case, config, observed, _ = setup()
+    config.parameters["stopping"].update(
+        max_iterations=60,
+        objective_rtol=None,
+        update_rtol=None,
+    )
+    control = InversionControl(case, config, observed, default_iterations=60)
+    scale, epsilon, damping = 1 / 1500**2, 2 * 5 / 1500**3, 25.0
+    initial = np.full(case.grid.shape, scale)
+    result, metrics = load_solver()(
+        DiagonalObservation(),
+        control,
+        initial=initial,
+        bounds=(1400, 1600),
+        damping=damping,
+        regularization=SpatialGradient(case.grid, 0.002),
+        inner_iterations=32,
+        tv_transition=epsilon,
+    )
+
+    def reference(x):
+        x = x.reshape(case.grid.shape)
+        residual = 2e-6 * (1 + x) ** 2 - observed[0]
+        precision = control.precision[0]
+        value = 0.5 * np.sum(precision * residual**2)
+        grad = precision * residual * 4e-6 * (1 + x)
+        m = scale * x
+        # Independent edge differences/divergence, not the production sparse L.
+        for axis in (0, 1):
+            edge = 2 * np.diff(m, axis=axis)
+            root = np.sqrt(1 + (edge / epsilon) ** 2)
+            value += damping * np.sum(edge**2 / (root + 1))
+            force = scale * 2 * damping * edge / root
+            if axis == 0:
+                grad[:-1] -= force
+                grad[1:] += force
+            else:
+                grad[:, :-1] -= force
+                grad[:, 1:] += force
+        return float(value * 1e12), grad.ravel() * 1e12
+
+    bounds = [(1 / 1600**2 / scale - 1, 1 / 1400**2 / scale - 1)] * initial.size
+    dense = minimize(
+        reference,
+        np.zeros(initial.size),
+        jac=True,
+        bounds=bounds,
+        method="L-BFGS-B",
+        options={"gtol": 1e-8, "ftol": 1e-14, "maxiter": 500},
+    )
+    assert dense.success, dense.message
+    x = (result / scale - 1).ravel()
+    np.testing.assert_allclose(reference(x)[0], dense.fun, rtol=1e-7, atol=1e-9)
+    np.testing.assert_allclose(x, dense.x, atol=2e-5)
+    history = metrics["iteration_history"]
+    assert all(b["objective"] <= a["objective"] for a, b in zip(history, history[1:]))
+    assert history[-1]["objective"] == pytest.approx(reference(x)[0] / 1e12, rel=1e-12)
+    assert metrics["optimizer_settings"]["data_loss"] == "quadratic"
+    assert (
+        metrics["optimizer_settings"]["regularization_loss"] == "smooth_anisotropic_tv"
+    )
 
 
 def test_zero_inner_step_is_not_nonlinear_stationarity(monkeypatch):

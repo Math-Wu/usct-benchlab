@@ -27,7 +27,11 @@ from usctbench.data.validation_acquisition import read_validation_acquisition
 from usctbench.data.waveforms import _read_channels, pressure_spectrum
 from usctbench.metrics import compute_regional_image_metrics
 from usctbench.operators.base import Linearization
-from usctbench.operators.model_space import BilinearBasis, FineGridRegularizer
+from usctbench.operators.model_space import (
+    BilinearBasis,
+    FineGridRegularizer,
+    SpatialGradient,
+)
 from usctbench.operators.forward.band_delay import (
     BandCorrelationDelay,
     BandDelayLinearization,
@@ -257,6 +261,18 @@ def main():
     )
     parser.add_argument("--regularization-length-wavelengths", type=float, default=0)
     parser.add_argument(
+        "--regularization-penalty",
+        choices=("quadratic_laplacian", "smooth_tv"),
+        default="quadratic_laplacian",
+        help="smooth_tv uses a physical first-difference penalty and requires TRF",
+    )
+    parser.add_argument(
+        "--tv-transition-mps",
+        type=float,
+        default=5.0,
+        help="smooth-TV transition, converted to squared slowness at 1500 m/s",
+    )
+    parser.add_argument(
         "--initialization", choices=("water", "phase_cgls"), default="water"
     )
     parser.add_argument("--initialization-iterations", type=int, default=80)
@@ -293,6 +309,19 @@ def main():
         parser.error("model-size control currently requires water initialization")
     if args.optimizer == "trf" and args.smooth_sigma:
         parser.error("TRF uses the explicit penalty; set smooth-sigma to zero")
+    if args.regularization_penalty == "smooth_tv" and (
+        args.optimizer != "trf"
+        or args.regularization_length_wavelengths <= 0
+        or args.damping_ratio <= 0
+        or not np.isfinite(args.tv_transition_mps)
+        or args.tv_transition_mps <= 0
+        or args.audit_only
+        or args.kernel_only
+        or args.solver_audit_checkpoint is not None
+    ):
+        parser.error(
+            "smooth_tv requires TRF inversion, positive length/damping/transition; quadratic audits are separate"
+        )
     repo = Path(__file__).resolve().parents[1]
     if args.out.resolve().is_relative_to(repo) or args.frequency_count < 9:
         parser.error("use external output and at least 9 frequencies")
@@ -586,6 +615,21 @@ def main():
     regularization = physical_regularization(
         args.regularization_length_wavelengths, frequencies[-1], case.grid.spacing_m
     )
+    regularization_info = regularization
+    tv_transition = None
+    if args.regularization_penalty == "smooth_tv":
+        length_m = args.regularization_length_wavelengths * 1500 / frequencies[-1]
+        regularization = SpatialGradient(case.grid, length_m)
+        tv_transition = 2 * args.tv_transition_mps / 1500**3
+        regularization_info = {
+            "kind": "smooth_anisotropic_tv",
+            "length_m": float(length_m),
+            "transition_mps": args.tv_transition_mps,
+            "transition_squared_slowness": tv_transition,
+            "transition_conversion": "linearized_at_1500_mps",
+            "boundary": "interior_edges_only",
+            "data_loss": "quadratic",
+        }
     del water_lin
     basis = (
         None
@@ -601,7 +645,7 @@ def main():
                 **parameters,
                 "damping": float(damping),
                 "damping_scaling": "four_training_only_rademacher_diagonal_probes",
-                "regularization": regularization,
+                "regularization": regularization_info,
                 "smooth_sigma": args.smooth_sigma,
                 "direction_sigma_coefficient_pixels": direction_sigma,
                 "initialization_qc": initialization_qc,
@@ -671,7 +715,9 @@ def main():
     if args.optimizer == "trf":
         from _finite_frequency_trf import solve_trust_region
 
-        selected, metrics = solve_trust_region(forward, control, **solver_parameters)
+        selected, metrics = solve_trust_region(
+            forward, control, **solver_parameters, tv_transition=tv_transition
+        )
     else:
         selected, metrics = nonlinear_least_squares(
             forward,

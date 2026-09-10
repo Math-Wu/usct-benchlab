@@ -15,8 +15,42 @@ from usctbench.core.stopping import BudgetExhausted
 from usctbench.solvers.least_squares import regularizer
 
 
+class SmoothTVLoss:
+    """SciPy loss: quadratic data rows and soft-L1 spatial-gradient rows.
+
+    With edge residual sqrt(lambda) * Dm, transition sqrt(lambda) * epsilon,
+    the penalty is lambda * epsilon^2 * sum(sqrt(1 + (Dm/epsilon)^2) - 1).
+    This is smooth anisotropic TV, not clipping or reweighting observed data.
+    """
+
+    def __init__(self, n_data, transition):
+        if not np.isfinite(transition) or transition <= 0:
+            raise ValueError("TV transition must be finite and positive")
+        self.n_data, self.scale_squared = n_data, transition**2
+        if not np.isfinite(self.scale_squared) or self.scale_squared == 0:
+            raise ValueError("TV transition squared is not representable")
+
+    def __call__(self, squared_residual):
+        z = np.asarray(squared_residual)
+        rho = np.vstack([z.copy(), np.ones_like(z), np.zeros_like(z)])
+        edges = z[self.n_data :]
+        root = np.sqrt(1 + edges / self.scale_squared)
+        rho[0, self.n_data :] = 2 * edges / (root + 1)
+        rho[1, self.n_data :] = 1 / root
+        rho[2, self.n_data :] = -0.5 / self.scale_squared / root**3
+        return rho
+
+
 def solve_trust_region(
-    forward, control, *, initial, bounds, damping, regularization, inner_iterations
+    forward,
+    control,
+    *,
+    initial,
+    bounds,
+    damping,
+    regularization,
+    inner_iterations,
+    tv_transition=None,
 ):
     if "callback" not in inspect.signature(least_squares).parameters:
         raise RuntimeError("experimental TRF requires SciPy >= 1.16 and Python >= 3.11")
@@ -51,6 +85,17 @@ def solve_trust_region(
     reg_shape = regularizer(reference * 0, regularization).shape
     n_residual = n_data + int(np.prod(reg_shape))
     reg_weight = float(np.sqrt(damping))
+    loss = (
+        "linear"
+        if tv_transition is None
+        else SmoothTVLoss(n_data, residual_scale * reg_weight * tv_transition)
+    )
+
+    def objective(residual):
+        if isinstance(loss, str):
+            return float(np.vdot(residual, residual).real / (2 * residual_scale**2))
+        return float(np.sum(loss(residual**2)[0]) / (2 * residual_scale**2))
+
     cached_x = cached_lin = cached_residual = None
     last_accepted = reference.copy()
     result = None
@@ -116,9 +161,7 @@ def solve_trust_region(
                 len(control.monitor.history),
                 state,
                 lin.value,
-                objective=float(
-                    np.vdot(residual, residual).real / (2 * residual_scale**2)
-                ),
+                objective=objective(residual),
                 update_relative=float(
                     np.linalg.norm(state - last_accepted)
                     / np.linalg.norm(last_accepted)
@@ -136,7 +179,7 @@ def solve_trust_region(
             0,
             reference,
             lin.value,
-            objective=float(np.vdot(residual, residual).real / (2 * residual_scale**2)),
+            objective=objective(residual),
             sound_speed=1 / np.sqrt(reference),
         )
         if control.monitor.reason is None:
@@ -146,6 +189,7 @@ def solve_trust_region(
                 jac=jac,
                 method="trf",
                 tr_solver="lsmr",
+                loss=loss,
                 bounds=(
                     1 / bounds[1] ** 2 / model_scale - 1,
                     1 / bounds[0] ** 2 / model_scale - 1,
@@ -191,6 +235,11 @@ def solve_trust_region(
         "pixel_speed_step_clip": False,
         "direction_smoothing": False,
         "internal_stopping_may_precede_monitor": True,
+        "regularization_loss": (
+            "quadratic" if tv_transition is None else "smooth_anisotropic_tv"
+        ),
+        "tv_transition_squared_slowness": tv_transition,
+        "data_loss": "quadratic",
     }
     metrics["trial_numerical_failures"] = trial_failures
     metrics["optimizer_terminal"] = (

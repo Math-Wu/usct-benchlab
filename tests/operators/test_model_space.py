@@ -8,6 +8,7 @@ from usctbench.operators.model_space import (
     BilinearBasis,
     FineGridRegularizer,
     ReducedLinearOperator,
+    SpatialGradient,
 )
 from usctbench.solvers.least_squares import normal_regularizer, regularizer
 
@@ -37,6 +38,38 @@ def test_basis_constants_bounds_adjoint_and_identity_grid():
     # Replication at the boundary, not a zero-valued halo.
     assert basis.forward(x)[0, 0] == x[0, 0]
     assert basis.forward(x)[-1, -1] == x[-1, -1]
+
+
+def test_physical_gradient_and_reduced_transpose_on_rectangular_grid():
+    grid, _, basis = fixture()
+    gradient = SpatialGradient(grid, 0.002)
+    rng = np.random.default_rng(514)
+    image = rng.normal(size=grid.shape)
+    expected = np.concatenate(
+        [
+            (np.diff(image, axis=0) * 0.002 / grid.spacing_m[0]).ravel(),
+            (np.diff(image, axis=1) * 0.002 / grid.spacing_m[1]).ravel(),
+        ]
+    )
+    np.testing.assert_allclose(gradient.forward(image), expected, atol=2e-15)
+    np.testing.assert_array_equal(gradient.forward(np.ones(grid.shape)), 0)
+    edges = rng.normal(size=expected.shape)
+    np.testing.assert_allclose(
+        np.vdot(gradient.forward(image), edges),
+        np.vdot(image, gradient.adjoint(edges)),
+        rtol=1e-14,
+    )
+    reduced = FineGridRegularizer(basis, gradient)
+    coarse = rng.normal(size=basis.shape)
+    np.testing.assert_allclose(
+        np.vdot(reduced.forward(coarse), edges),
+        np.vdot(coarse, reduced.adjoint(edges)),
+        rtol=1e-14,
+    )
+    line = SpatialGradient(GridSpec(shape=(1, 3), spacing_m=(1, 1)), 1)
+    np.testing.assert_array_equal(line.forward(np.array([[1.0, 2.0, 4.0]])), [1.0, 2.0])
+    with pytest.raises(ValueError, match="finite real edge"):
+        gradient.adjoint(np.zeros(grid.shape))
 
 
 def test_straight_composition_and_norms():
