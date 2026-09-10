@@ -113,6 +113,20 @@ def physical_regularization(length_wavelengths, maximum_frequency, spacing):
     return tuple(float((length_m / h) ** 2) for h in spacing)
 
 
+def regularization_weight(diagonal, ratio, absolute=None):
+    """Allow changing observations without implicitly changing the prior weight."""
+    value = ratio if absolute is None else absolute
+    if not np.isfinite(value) or value < 0:
+        raise ValueError("regularization weight must be finite and nonnegative")
+    if absolute is not None:
+        return float(absolute)
+    diagonal = np.asarray(diagonal)
+    positive = diagonal[diagonal > 0]
+    if not np.isfinite(diagonal).all() or not positive.size:
+        raise ValueError("cannot scale regularization without finite sensitivity")
+    return float(ratio * np.median(positive))
+
+
 def phase_initialization(case, measured, water, frequencies, distance, control, args):
     """Reuse the existing rWave phase-CGLS recipe, with this run's training split."""
     from types import SimpleNamespace
@@ -252,7 +266,13 @@ def main():
         help="GN regularized gradient norm relative to its initial norm",
     )
     parser.add_argument("--seconds", type=float, default=7200)
-    parser.add_argument("--damping-ratio", type=float, default=0.02)
+    damping_group = parser.add_mutually_exclusive_group()
+    damping_group.add_argument("--damping-ratio", type=float, default=0.02)
+    damping_group.add_argument(
+        "--damping-absolute",
+        type=float,
+        help="fixed coefficient of the spatial penalty; independent of band Jacobian",
+    )
     parser.add_argument(
         "--smooth-sigma",
         type=float,
@@ -292,6 +312,9 @@ def main():
     )
     parser.add_argument("--gpu", type=int, help="optional CuPy device; CPU by default")
     args = parser.parse_args()
+    damping_input = (
+        args.damping_ratio if args.damping_absolute is None else args.damping_absolute
+    )
     if (
         sum(
             [
@@ -312,7 +335,7 @@ def main():
     if args.regularization_penalty == "smooth_tv" and (
         args.optimizer != "trf"
         or args.regularization_length_wavelengths <= 0
-        or args.damping_ratio <= 0
+        or damping_input <= 0
         or not np.isfinite(args.tv_transition_mps)
         or args.tv_transition_mps <= 0
         or args.audit_only
@@ -326,8 +349,8 @@ def main():
     if args.out.resolve().is_relative_to(repo) or args.frequency_count < 9:
         parser.error("use external output and at least 9 frequencies")
     if (
-        not np.isfinite(args.damping_ratio)
-        or args.damping_ratio < 0
+        not np.isfinite(damping_input)
+        or damping_input < 0
         or not 0 <= args.minimum_peak_gap < 1
         or not np.isfinite(args.smooth_sigma)
         or args.smooth_sigma < 0
@@ -339,7 +362,7 @@ def main():
         or not np.isfinite(args.initialization_smooth_mm)
         or args.initialization_smooth_mm < 0
     ):
-        parser.error("invalid damping ratio or peak gap")
+        parser.error("invalid damping or feature/initialization setting")
     args.out.mkdir(parents=True, exist_ok=False)
     (args.out / "executed_experiment.py").write_bytes(executed_source)
     helper_hash = None
@@ -631,7 +654,7 @@ def main():
         control.work.counts["diagonal_probes"] = (
             control.work.counts.get("diagonal_probes", 0) + 1
         )
-    damping = args.damping_ratio * np.median(diagonal[diagonal > 0])
+    damping = regularization_weight(diagonal, args.damping_ratio, args.damping_absolute)
     regularization = physical_regularization(
         args.regularization_length_wavelengths, frequencies[-1], case.grid.spacing_m
     )
@@ -664,7 +687,11 @@ def main():
             {
                 **parameters,
                 "damping": float(damping),
-                "damping_scaling": "four_training_only_rademacher_diagonal_probes",
+                "damping_scaling": (
+                    "four_training_only_rademacher_diagonal_probes"
+                    if args.damping_absolute is None
+                    else "fixed_absolute_coefficient"
+                ),
                 "regularization": regularization_info,
                 "smooth_sigma": args.smooth_sigma,
                 "direction_sigma_coefficient_pixels": direction_sigma,

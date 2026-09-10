@@ -42,6 +42,21 @@ def test_physical_regularization_has_portable_yaml_types():
     assert all(type(v) is float for v in regularization)
 
 
+def test_fixed_regularization_weight_does_not_follow_band_sensitivity():
+    select = load_experiment().regularization_weight
+    diagonal = np.array([0.0, 1.0, 2.0, 3.0])
+    assert select(diagonal, 0.02) == pytest.approx(0.04)
+    assert select(diagonal * 100, 0.02) == pytest.approx(4.0)
+    assert select(diagonal, 0.02, 0.04) == 0.04
+    assert select(diagonal * 100, 0.02, 0.04) == 0.04
+    assert select(diagonal, 0.02, 0.0) == 0.0
+    for bad in (-1.0, np.nan, np.inf):
+        with pytest.raises(ValueError, match="nonnegative"):
+            select(diagonal, 0.02, bad)
+    with pytest.raises(ValueError, match="sensitivity"):
+        select(np.zeros(3), 0.02)
+
+
 def test_direct_observed_correlation_chain_and_channel_locality():
     module = load_experiment()
     f = np.linspace(80e3, 350e3, 15)

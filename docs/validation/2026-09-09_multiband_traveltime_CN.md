@@ -97,6 +97,13 @@ $$
 - 使用同一个相对正则化规则：仅训练通道的四个 Rademacher 探针估计对角尺度，阻尼为其中位数的 0.02 倍。
 - 留出用于停止和 checkpoint 选择，属于 validation，不是 untouched test。GT 只用于前向归因或反演后的组织区 RMSE/PSNR/SSIM。
 
+上述规则保持的是相同的调参规则，不是相同的绝对正则系数：换频带会改变 Jacobian。
+需要固定空间目标的单因素对照时，可用 `--damping-absolute VALUE`，其中 `VALUE`
+取自已冻结参考运行 `config.yaml` 的 `damping` 字段，而不是 `damping-ratio`。
+它与 `--damping-ratio` 互斥，并在新配置中标记 `fixed_absolute_coefficient`。
+同时应保持传播网格、物理正则长度、正则类型、初值和每对通道总权重不变。
+默认仍是原相对规则；固定系数也不代表已找到最优超参数。
+
 ## 验证与结果状态
 
 已完成：延迟符号与有限平移、正通道增益不变性、局部性、坏通道、相关峰导数有限差分、
