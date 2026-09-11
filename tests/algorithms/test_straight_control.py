@@ -52,7 +52,7 @@ def test_operator_extraction_preserves_alias_and_discrete_adjoint():
         op, rng.normal(size=case.grid.shape), rng.normal(size=op.n_rays)
     )
     assert error < 1e-12
-    assert op.__class__.__module__ == "usctbench.operators.forward.straight_ray"
+    assert op.__class__.__module__ == "usctbench.operators.straight_ray"
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
