@@ -38,8 +38,12 @@ class InversionControl:
             rx_positions=case.geometry.rx_pos_m,
             **settings,
         )
-        self.policy = StopPolicy.from_parameters(
-            config.parameters, default_iterations=default_iterations
+        self.policy = (
+            config.run_controls.to_stop_policy()
+            if config.run_controls is not None
+            else StopPolicy.from_parameters(
+                config.parameters, default_iterations=default_iterations
+            )
         )
         if self.policy.validation_patience is not None and not np.any(
             self.split.validation
