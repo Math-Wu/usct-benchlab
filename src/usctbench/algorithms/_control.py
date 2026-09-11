@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from usctbench.core.config import coerce_bool
+from usctbench.core.run_controls import RunControls
 from usctbench.core.stopping import StopMonitor, StopPolicy, WorkLedger
 from usctbench.evaluation.data import make_data_split, residual_statistics
 from usctbench.metrics import (
@@ -39,8 +40,13 @@ class InversionControl:
             **settings,
         )
         self.policy = (
-            config.run_controls.to_stop_policy()
-            if config.run_controls is not None
+            (config.run_controls or RunControls()).to_stop_policy(
+                default_iterations=config.parameters.get(
+                    "iterations", default_iterations
+                ),
+                budget=config.budget_caps,
+            )
+            if config.run_controls is not None or config.budget_caps is not None
             else StopPolicy.from_parameters(
                 config.parameters, default_iterations=default_iterations
             )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from usctbench.core.compat import StrEnum
-from usctbench.core.run_controls import RunControls
+from usctbench.core.run_controls import BudgetCaps, RunControls
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -272,6 +272,7 @@ class AlgorithmConfig(_ArrayModel):
 
     name: str | None = None
     run_controls: RunControls | None = None
+    budget_caps: BudgetCaps | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -279,7 +280,9 @@ class AlgorithmConfig(_ArrayModel):
     def _unambiguous_controls(self):
         # One owner for execution budgets: legacy YAML and typed controls must
         # never silently override each other.
-        if self.run_controls is not None and "stopping" in self.parameters:
+        if (
+            self.run_controls is not None or self.budget_caps is not None
+        ) and "stopping" in self.parameters:
             raise ValueError("use run_controls or legacy parameters.stopping, not both")
         return self
 

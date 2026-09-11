@@ -28,9 +28,9 @@ class RunControls(BaseModel):
         extra="forbid", allow_inf_nan=False, validate_default=True
     )
 
-    max_iterations: NonnegativeInt = Field(
-        default=50,
-        description="Complete method-specific iterations; zero permits no updates.",
+    max_iterations: NonnegativeInt | None = Field(
+        default=None,
+        description="Null inherits the method iteration default; zero permits no updates.",
     )
     max_elapsed_s: NonnegativeFloat | None = Field(
         default=None,
@@ -41,8 +41,8 @@ class RunControls(BaseModel):
         description="Minimum complete iterations before update-based stopping; budgets take priority.",
     )
     update_rtol: NonnegativeFloat | None = Field(
-        default=1e-6,
-        description="Relative change in the documented model variable; null disables this criterion.",
+        default=None,
+        description="Relative change in the documented model variable. Opt-in: no universal tolerance is assumed across parameterizations.",
     )
     update_patience: Annotated[int, Field(strict=True, ge=1)] = Field(
         default=2,
@@ -57,20 +57,36 @@ class RunControls(BaseModel):
         description="Optional cap on WorkLedger adjoint-charged operations, including normalization.",
     )
 
-    def to_stop_policy(self) -> StopPolicy:
+    def to_stop_policy(
+        self,
+        *,
+        default_iterations: int | None = None,
+        budget: BudgetCaps | dict | None = None,
+    ) -> StopPolicy:
         # Legacy YAML policies remain available explicitly. New production calls
         # do not silently enable objectives, oracle targets or validation selection.
         return StopPolicy(
-            **self.model_dump(),
+            **self.capped(budget, default_iterations=default_iterations).model_dump(),
             objective_rtol=None,
             validation_patience=None,
             restore_best_validation=False,
         )
 
-    def capped(self, budget: BudgetCaps | dict | None) -> RunControls:
+    def capped(
+        self, budget: BudgetCaps | dict | None, *, default_iterations: int | None = None
+    ) -> RunControls:
         """Intersect requested controls with agent admission caps (including zero)."""
         caps = BudgetCaps.model_validate(budget or {})
         values = self.model_dump()
+        if self.max_iterations is None:
+            if default_iterations is None:
+                raise ValueError(
+                    "default_iterations is required to resolve an inherited budget"
+                )
+            # Resolve the method default BEFORE intersection: a cap is never a request.
+            values["max_iterations"] = RunControls(
+                max_iterations=default_iterations
+            ).max_iterations
         for target, value in {
             "max_iterations": caps.max_iterations,
             "max_elapsed_s": caps.timeout_s,
