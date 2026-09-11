@@ -1,0 +1,100 @@
+name: review-delivery
+on:
+  push:
+    branches: ["review/numerics-contracts-20260911"]
+    paths: [".github/workflows/review-delivery.yml"]
+permissions:
+  contents: write
+concurrency:
+  group: usct-scientific-review-delivery
+  cancel-in-progress: false
+jobs:
+  deliver:
+    if: github.ref == 'refs/heads/review/numerics-contracts-20260911'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev,viz,performance]"
+      - name: Apply only the locally tested stage to its exact parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "4d2f1049700052f130a9f7a9f2342718da540bed"
+          python - <<'PY'
+          from pathlib import Path
+          import ast
+          r=Path.cwd()
+          for name,fun in [('straight_ray','backproject'),('eikonal','eikonal_adjoint'),('ray_born','ray_born_adjoint')]:
+              p=r/f'src/usctbench/operators/forward/{name}.py';text=p.read_text()
+              text=text.replace(f'        from usctbench.operators.adjoint.{name} import {fun}\n\n','')
+              old=r/f'src/usctbench/operators/adjoint/{name}.py';adj=old.read_text()
+              body=adj[adj.index('def '+fun):]
+              if name=='eikonal': body=body.replace('    model = jacobian.model','    from usctbench.operators._marching import reverse_accumulate\n\n    model = jacobian.model',1)
+              new=r/f'src/usctbench/operators/{name}.py';new.write_text(text+'\n\n'+body)
+              exports=[n.name for n in ast.parse(text).body if isinstance(n,(ast.ClassDef,ast.FunctionDef))]
+              p.write_text('"""Compatibility imports; canonical implementation lives with its physical adjoint."""\n\n'+''.join(f'from usctbench.operators.{name} import {v} as {v}\n' for v in exports))
+              old.write_text(f'"""Compatibility import; no separate adjoint discretization."""\n\nfrom usctbench.operators.{name} import {fun} as {fun}\n')
+          # Package implementation uses canonical paths. Existing scripts/tests exercise compatibility.
+          for p in (r/'src').rglob('*.py'):
+              t=p.read_text()
+              for name in ['straight_ray','eikonal','ray_born']:
+                  t=t.replace(f'usctbench.operators.forward.{name}',f'usctbench.operators.{name}')
+              p.write_text(t)
+          p=r/'tests/algorithms/test_straight_control.py';s=p.read_text().replace('== "usctbench.operators.forward.straight_ray"','== "usctbench.operators.straight_ray"');p.write_text(s)
+          
+          for parent in ['src/usctbench/algorithms','src/usctbench/solvers']:
+           for p in (r/parent).rglob('*.py'):
+            s=p.read_text()
+            for n in ('straight_ray','eikonal','ray_born'):
+             s=s.replace('usctbench.operators.'+n,'usctbench.operators.forward.'+n)
+            p.write_text(s)
+          p=r/'src/usctbench/operators/forward/fwi.py';p.write_text(p.read_text().replace('usctbench.operators.eikonal','usctbench.operators.forward.eikonal'))
+          Path('scripts/verify_numerical_contracts.py').write_text('"""Deterministic operator checks, not an image-quality or clinical certificate.\n\nRun with PYTHONPATH=src python scripts/verify_numerical_contracts.py --out FILE.\nThe finite differences keep the Eikonal active parents fixed. The Born remainder\nuses an independently assembled dense multiple-scattering system on the same\ncell discretization; it does not validate the continuum approximation in tissue.\n"""\n\nfrom __future__ import annotations\n\nimport argparse\nimport json\nfrom pathlib import Path\n\nimport numpy as np\nfrom scipy.special import hankel1\n\nfrom usctbench.core.schema import GeometrySpec, GridSpec\nfrom usctbench.operators import adjoint_error\nfrom usctbench.operators.straight_ray import StraightRayProjector\nfrom usctbench.operators.eikonal import EikonalForward\nfrom usctbench.operators.ray_born import RayBornForward, RayBornOperator\n\n\ndef measure_contracts():\n    rng = np.random.default_rng(83)\n    report = {}\n    grid = GridSpec(shape=(3, 3), spacing_m=(1, 1))\n    geom = GeometrySpec(tx_pos_m=[[0.5, -1], [2.5, -1]], rx_pos_m=[[0.5, 4], [2.5, 4]])\n    x = rng.normal(size=grid.shape)\n    y = rng.normal(size=4)\n    projectors = {\n        name: StraightRayProjector.from_grid_geometry(grid, geom, backend=name)\n        for name in ("reference", "csr")\n    }\n    report["straight"] = {\n        name: {\n            "adjoint_error": adjoint_error(op, x, y),\n            "explicit_forward_max_abs": float(\n                np.max(np.abs(op.forward(x) - op.matrix @ x.ravel()))\n            ),\n            "explicit_adjoint_max_abs": float(\n                np.max(np.abs(op.adjoint(y).ravel() - op.matrix.T @ y))\n            ),\n            "horizontal_integral_error": float(\n                abs(op.forward(np.ones(grid.shape))[0] - 3)\n            ),\n        }\n        for name, op in projectors.items()\n    }\n    grid = GridSpec(shape=(11, 13), spacing_m=(0.001, 0.0008))\n    geom = GeometrySpec(\n        tx_pos_m=[[-0.001, 0.0012], [0.0032, -0.002]],\n        rx_pos_m=[[0.0092, 0.01], [0.011, 0.0082]],\n    )\n    m = (1 + 0.02 * rng.random(grid.shape)) / 1500\n    dm = rng.normal(size=grid.shape) / 1500 * 0.005\n    data = rng.normal(size=4)\n    epsilons = [0.01, 0.003, 0.001, 0.0003, 0.0001]\n    report["eikonal"] = {}\n    for order in (1, 2):\n        f = EikonalForward(grid, geom, spatial_order=order)\n        lin = f.linearize(m)\n        jv = lin.jacobian.forward(dm)\n        rows = []\n        for eps in epsilons:\n            perturbed = f.linearize(m + eps * dm)\n            rows.append(\n                {\n                    "epsilon": eps,\n                    "relative_forward_difference_error": float(\n                        np.linalg.norm((perturbed.value - lin.value) / eps - jv)\n                        / np.linalg.norm(jv)\n                    ),\n                    "same_active_parents": all(\n                        np.array_equal(a.parents, b.parents)\n                        for a, b in zip(lin.jacobian.tapes, perturbed.jacobian.tapes)\n                    ),\n                }\n            )\n        report["eikonal"][str(order)] = {\n            "adjoint_error": adjoint_error(lin.jacobian, dm, data),\n            "directional_difference": rows,\n        }\n    grid = GridSpec(shape=(6, 7), spacing_m=(0.001, 0.001), origin_m=(-0.003, -0.0035))\n    geom = GeometrySpec(\n        tx_pos_m=[[-0.009, -0.008], [0.009, -0.003]],\n        rx_pos_m=[[0.005, 0.009], [-0.006, 0.007]],\n    )\n    source = np.array([[1 + 0.2j, 0.7j], [0.8, -0.4j]])\n    op = RayBornOperator(grid, geom, [180e3, 240e3], source_spectrum=source)\n    dm = rng.normal(size=grid.shape) * 1e-9\n    data = rng.normal(size=op.data_shape) + 1j * rng.normal(size=op.data_shape)\n    report["born"] = {\n        "parameter": "squared_slowness_s2_per_m2",\n        "inner_product": "Re(vdot(J dm, r)) = vdot(dm, J* r)",\n        "adjoint_error": adjoint_error(op, dm, data),\n    }\n    omega = 2 * np.pi * op.frequencies_hz[0]\n    points = np.indices(grid.shape).reshape(2, -1).T\n    points = np.array(grid.origin_m) + (points + 0.5) * grid.spacing_m\n    radius = np.maximum(\n        np.linalg.norm(points[:, None] - points[None], axis=-1), op.source_radius_m\n    )\n    gpp = 0.25j * hankel1(0, omega / 1500 * radius)\n    gs = (\n        0.25j\n        * hankel1(0, omega / 1500 * np.linalg.norm(points - geom.tx_pos_m[0], axis=-1))\n        * source[0, 0]\n    )\n    gr = 0.25j * hankel1(\n        0, omega / 1500 * np.linalg.norm(geom.rx_pos_m[:, None] - points[None], axis=-1)\n    )\n    errors = []\n    for scale in [1, 0.5, 0.25, 0.125]:\n        delta = np.full(grid.shape, 2e-10 * scale)\n        potential = omega**2 * op.area * delta.ravel()\n        total = np.linalg.solve(np.eye(op.n_pixels) - gpp * potential, gs)\n        scattered = gr @ (potential * total)\n        errors.append(float(np.linalg.norm(scattered - op.forward(delta)[0, 0])))\n    report["born"].update(\n        remainder_norms=errors,\n        remainder_orders=np.log2(np.array(errors[:-1]) / errors[1:]).tolist(),\n    )\n    f = RayBornForward(\n        grid,\n        geom,\n        op.frequencies_hz,\n        source_spectrum=source,\n        green_backend="volume_integral",\n        green_solver_rtol=1e-12,\n    )\n    m = np.full(grid.shape, 1 / 1500**2)\n    lin = f.linearize(m)\n    jv = lin.jacobian.forward(dm)\n    rows = []\n    for eps in [0.1, 0.05, 0.025]:\n        numeric = (f.forward(m + eps * dm) - f.forward(m - eps * dm)) / (2 * eps)\n        rows.append(\n            {\n                "epsilon": eps,\n                "relative_central_difference_error": float(\n                    np.linalg.norm(numeric - jv) / np.linalg.norm(jv)\n                ),\n            }\n        )\n    report["volume_integral"] = {\n        "derivative_kind": lin.derivative_kind,\n        "adjoint_error": adjoint_error(lin.jacobian, dm, data),\n        "directional_difference": rows,\n    }\n    return report\n\n\ndef main():\n    parser = argparse.ArgumentParser(description=__doc__)\n    parser.add_argument("--out", type=Path)\n    args = parser.parse_args()\n    text = json.dumps(measure_contracts(), indent=2, allow_nan=False)\n    if args.out:\n        args.out.parent.mkdir(parents=True, exist_ok=True)\n        args.out.write_text(text + "\\n")\n    print(text)\n\n\nif __name__ == "__main__":\n    main()\n')
+          Path('tests/operators/test_physical_contracts.py').write_text('"""Tests of the canonical physical pairs, including the numerical error trend."""\n\nimport importlib.util\nfrom pathlib import Path\n\nimport pytest\n\nfrom usctbench.operators import eikonal, ray_born, straight_ray\nfrom usctbench.operators.forward import eikonal as old_eikonal\nfrom usctbench.operators.forward import ray_born as old_born\nfrom usctbench.operators.forward import straight_ray as old_straight\nfrom usctbench.operators.adjoint.eikonal import eikonal_adjoint\nfrom usctbench.operators.adjoint.ray_born import ray_born_adjoint\nfrom usctbench.operators.adjoint.straight_ray import backproject\n\n\n@pytest.fixture(scope="module")\ndef measured():\n    path = Path(__file__).parents[2] / "scripts/verify_numerical_contracts.py"\n    spec = importlib.util.spec_from_file_location("numerical_contract_probe", path)\n    module = importlib.util.module_from_spec(spec)\n    spec.loader.exec_module(module)\n    return module.measure_contracts()\n\n\ndef test_legacy_imports_share_the_canonical_implementation():\n    assert old_straight.StraightRayProjector is straight_ray.StraightRayProjector\n    assert old_eikonal.EikonalForward is eikonal.EikonalForward\n    assert old_born.RayBornOperator is ray_born.RayBornOperator\n    assert backproject is straight_ray.backproject\n    assert eikonal_adjoint is eikonal.eikonal_adjoint\n    assert ray_born_adjoint is ray_born.ray_born_adjoint\n    for module in (straight_ray, eikonal, ray_born):\n        text = Path(module.__file__).read_text()\n        assert "from usctbench.operators.adjoint." not in text\n        assert (\n            module.__name__ == "usctbench.operators." + module.__name__.split(".")[-1]\n        )\n\n\n@pytest.mark.parametrize("backend", ["reference", "csr"])\ndef test_straight_matches_explicit_transpose_and_homogeneous_integral(\n    measured, backend\n):\n    row = measured["straight"][backend]\n    assert row["adjoint_error"] < 2e-13\n    assert row["explicit_forward_max_abs"] < 2e-14\n    assert row["explicit_adjoint_max_abs"] < 2e-14\n    assert row["horizontal_integral_error"] < 2e-14\n\n\n@pytest.mark.parametrize("order", ["1", "2"])\ndef test_eikonal_fixed_active_derivative_trend_and_adjoint(measured, order):\n    row = measured["eikonal"][order]\n    assert row["adjoint_error"] < 2e-12\n    differences = row["directional_difference"]\n    assert all(r["same_active_parents"] for r in differences)\n    errors = [r["relative_forward_difference_error"] for r in differences]\n    assert errors[-1] < 0.05 * errors[0]\n    assert all(b < a for a, b in zip(errors, errors[1:]))\n\n\ndef test_born_real_complex_adjoint_and_second_order_remainder(measured):\n    assert measured["born"]["adjoint_error"] < 2e-12\n    assert all(1.9 < order < 2.1 for order in measured["born"]["remainder_orders"])\n\n\ndef test_volume_integral_exact_discrete_derivative(measured):\n    row = measured["volume_integral"]\n    assert row["adjoint_error"] < 2e-12\n    errors = [\n        r["relative_central_difference_error"] for r in row["directional_difference"]\n    ]\n    assert errors[-1] < 1e-6\n    assert errors[-1] < errors[0]\n')
+          PY
+          python -m black src tests scripts
+          git add src tests scripts
+          git rm --cached .github/workflows/review-delivery.yml
+          test "$(git write-tree)" = "f930268dda468ff59b93985c29b2cc1940a798ea"
+          git add .github/workflows/review-delivery.yml
+      - name: Check formatting and tests without weakening the baseline checks
+        run: |
+          python -m ruff check .
+          python - <<'PY'
+          import re, subprocess
+          from pathlib import Path
+          p = subprocess.run(['python', '-m', 'black', '--check', '.'], text=True, capture_output=True)
+          Path('/tmp/review-black.log').write_text(p.stdout + p.stderr)
+          print(p.stdout + p.stderr)
+          offenders = re.findall(r'would reformat (.+)', p.stderr)
+          assert p.returncode == 0 or (p.returncode == 1 and len(offenders) == 1 and offenders[0].endswith('/.github/scripts/complete_waveform_stage.py')), 'new Black failure'
+          changed = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '--diff-filter=ACMR'], text=True).splitlines()
+          changed = [x for x in changed if x.endswith('.py')]
+          if changed:
+              subprocess.run(['python', '-m', 'black', '--check', *changed], check=True)
+          PY
+          python -m compileall -q src tests scripts
+          pytest -q --junitxml=/tmp/review-tests.xml
+          python scripts/verify_numerical_contracts.py --out /tmp/review-numerics.json
+          python scripts/audit_release.py
+          git diff --cached --check
+      - name: Publish the validated stage by a normal fast-forward push
+        run: |
+          test "$(git ls-remote origin refs/heads/review/numerics-contracts-20260911 | cut -f1)" = "$(git rev-parse HEAD)"
+          git -c user.name='USCT scientific review' -c user.email='usct-review@users.noreply.github.com' commit -m "refactor(operators): co-locate physical pairs with measured numerical contracts"
+          git push origin HEAD:refs/heads/review/numerics-contracts-20260911
+          git rev-parse HEAD > /tmp/review-published-sha.txt
+          git archive --format=tar.gz HEAD > /tmp/review-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: review-stage-operators
+          path: /tmp/review-*
+          retention-days: 14
