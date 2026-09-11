@@ -130,7 +130,7 @@ def test_or_rules_record_all_triggers_with_priority():
         ({"max_iterations": 0}, {}, "max_iterations"),
         ({"update_rtol": 0.01}, {"update_relative": 0.001}, "small_model_update"),
         ({"objective_patience": 1}, {}, "objective_plateau"),
-        ({"max_iterations": 5}, {"residual_norm": 0}, "exact_data_fit"),
+        ({"max_iterations": 5}, {"residual_norm": 0, "objective": 0}, "exact_data_fit"),
     ],
 )
 def test_stop_reasons(kwargs, second, reason):
