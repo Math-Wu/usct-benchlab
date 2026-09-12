@@ -12,7 +12,6 @@ from usctbench.algorithms.configuration import (
     validate_algorithm_config,
 )
 from usctbench.algorithms.parameters import CGLSParameters, SIRTParameters
-from usctbench.algorithms.fwi.parameters import ExternalFWIParameters
 from usctbench.benchmark.runner import load_algorithm_config
 from usctbench.cli import register_builtin_algorithms
 from usctbench.core.registry import get_algorithm
@@ -35,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
     ],
 )
 def test_removed_fwi_material_parameters_fail_closed(tmp_path, field):
-    assert_admission_paths(tmp_path, "fwi_kwave_adapter", {field: None}, False)
+    assert_admission_paths(tmp_path, "fwi_wust", {field: None}, False)
 
 
 def assert_admission_paths(tmp_path, name, parameters, accepted):
@@ -148,53 +147,6 @@ def test_born_operator_parameter_limits(tmp_path, mode, field, value, accepted):
 
 
 @pytest.mark.parametrize(
-    "old,new,value,canonical",
-    [
-        ("c_init", "initial_sound_speed_mps", 1490.0, 1490.0),
-        ("velocity_bounds", "sound_speed_bounds_mps", [1400, 1600], (1400, 1600)),
-        ("sos_freqs_mhz", "sos_frequencies_hz", 0.3, [300000.0]),
-    ],
-)
-def test_external_alias_null_scalar_and_roundtrip(tmp_path, old, new, value, canonical):
-    for parameters in (
-        {old: None},
-        {old: None, new: canonical},
-        {old: value, new: None},
-        {old: value, new: canonical},
-    ):
-        resolved = assert_admission_paths(
-            tmp_path, "fwi_kwave_adapter", parameters, True
-        )
-        typed = ExternalFWIParameters.model_validate(resolved.parameters)
-        expected = None if parameters == {old: None} else canonical
-        assert getattr(typed, new) == expected
-    bad = 1480.0 if old == "c_init" else [1300.0, 1700.0]
-    assert_admission_paths(tmp_path, "fwi_kwave_adapter", {old: value, new: bad}, False)
-
-
-@pytest.mark.parametrize("field,value", [("sos_iters", 3), ("cuda_devices", 0)])
-def test_external_legacy_scalar_sequences(tmp_path, field, value):
-    resolved = assert_admission_paths(
-        tmp_path, "fwi_kwave_adapter", {field: value}, True
-    )
-    assert resolved.parameters[field] == [value]
-    assert_admission_paths(tmp_path, "fwi_kwave_adapter", {field: "bad"}, False)
-
-
-@pytest.mark.parametrize(
-    "parameters",
-    [
-        {"c_init": True},
-        {"sos_freqs_mhz": "0.3"},
-        {"velocity_bounds": 1500},
-        {"baseline_sound_speed_mps": 0},
-    ],
-)
-def test_external_invalid_legacy_values(tmp_path, parameters):
-    assert_admission_paths(tmp_path, "fwi_kwave_adapter", parameters, False)
-
-
-@pytest.mark.parametrize(
     "name",
     [
         "straight_cgls",
@@ -202,7 +154,7 @@ def test_external_invalid_legacy_values(tmp_path, parameters):
         "straight_sart",
         "bent_ray_gn",
         "rwave_adapter",
-        "fwi_kwave_adapter",
+        "fwi_wust",
         "fwi_tiny",
     ],
 )
@@ -269,9 +221,6 @@ def test_nested_fields_fail_closed():
 
 def test_repository_configs_and_idempotent_resolution():
     for path in sorted((ROOT / "configs/algorithms").glob("*.yaml")):
-        if path.name == "diffusion_fwi_kwave.yaml":
-            # Existing optional integration is explicitly outside this typed API.
-            continue
         config = load_algorithm_config(path)
         again = validate_algorithm_config(config.name, config)
         assert again.model_dump() == config.model_dump(), path
@@ -333,25 +282,6 @@ def test_typed_boundary_preserves_default_reconstruction(name):
     assert after.metrics["stopping"]["policy"] == before.metrics["stopping"]["policy"]
     bad = algorithm.run(case, AlgorithmConfig(parameters={"unknown": 1}))
     assert bad.status == "failed" and "invalid configuration" in bad.failure_reason
-
-
-def test_fwi_aliases_delegate_unspecified_runtime_defaults():
-    p = ExternalFWIParameters.model_validate(
-        {"c_init": 1500, "velocity_bounds": [1400, 1600], "sos_freqs_mhz": [0.3, 0.4]}
-    )
-    assert p.initial_sound_speed_mps == 1500
-    assert p.sos_frequencies_hz == [300000, 400000]
-    assert p.max_update_mps is None
-    assert "max_update_mps" not in p.backend_parameters()
-    assert p.backend_parameters()["sos_freqs_mhz"] == pytest.approx([0.3, 0.4])
-    with pytest.raises(ValueError, match="conflicting"):
-        ExternalFWIParameters.model_validate(
-            {"c_init": 1500, "initial_sound_speed_mps": 1400}
-        )
-    with pytest.raises(ValueError, match="cannot enforce"):
-        validate_algorithm_config(
-            "fwi_kwave_adapter", AlgorithmConfig(run_controls={"max_iterations": 2})
-        )
 
 
 def test_fixed_born_budget_is_not_a_nonlinear_inner_parameter():

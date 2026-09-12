@@ -1,150 +1,97 @@
-# FWI Adapter
+# WUST full-wave inversion
 
-The FWI path is exposed through two adapter-style commands:
+`fwi_wust -> pinned WUST runtime -> MATLAB -> CUDA Block-LU` is the only
+production FWI path. CPU is reference/debug only, never an automatic fallback.
+Ordinary installation and CI require neither MATLAB nor GPU. Reconstruction is
+2-D sound-speed-only; no diffusion runtime or attenuation reconstruction is included.
 
-- `fwi_kwave_adapter` ingests pure external k-Wave/FWI artifacts.
-- `diffusion_fwi_kwave_adapter` ingests external diffusion-prior k-Wave/FWI
-  DPS artifacts.
+## Deployment
 
-Both commands report external reconstructions in the same artifact format as
-the classical baselines. They do not vendor the external solver, PyTorch model,
-MATLAB runtime, or k-Wave binary into `usct-benchlab`.
-
-## Mathematical Model
-
-The FWI objective is summarized as
-
-$$
-\min_c
-\frac{1}{2}\sum_{\omega,s,r}
-\left|
-\hat p_s(\omega,r;c)-\hat p_{sr}^{\mathrm{obs}}(\omega)
-\right|^2
-+\lambda R(c).
-$$
-
-The pressure prediction $\hat p_s(\omega,r;c)$ is produced by an external
-full-wave solver.
-
-## Configure an Existing Result
-
-Artifact import defaults to the final iteration. GT-based `best` selection needs
-an explicit `allow_ground_truth_selection: true` and is not allowed for truth-free
-validation. This adapter cannot infer the production solver's actual stop reason
-from a final image and refuses `stopping` / `evaluation` settings it cannot enforce.
-
-Set:
+Use clean `lucian-dw/WaveformInversionUST` at exactly
+`79e347015be64cca88bacf591b4eed0952398800` (version `0.2.0-dev.1`, schema 1).
+SHA and verified source manifest are authoritative, not a moving branch.
+Build the maintained CUDA MEX on the deployment host. This development pin is
+not itself final release certification.
 
 ```bash
-export USCT_KWAVE_FWI_RESULT_PATH=/path/to/fwi_result.mat
-export USCT_KWAVE_ROOT=/path/to/external/USCT_kwave
-export USCT_KWAVE_PYTHON_BIN=/path/to/python
-```
-
-Then run:
-
-```bash
-usct run fwi_kwave_adapter \
-  --case "$USCT_WORKSPACE/data/openbreastus_demo/cases/example_case.h5" \
-  --config configs/algorithms/fwi_kwave.yaml \
+export USCT_WUST_ROOT=/path/to/approved/WaveformInversionUST
+python "$USCT_WUST_ROOT/Runtime/python/wust_runtime.py" describe --json
+usct describe-algorithm fwi_wust --json
+usct run fwi_wust \
+  --case /path/to/frequency_case.h5 \
+  --config configs/algorithms/fwi_wust.yaml \
   --out runs/single_fwi
 ```
 
-The result MAT file must contain `VEL_ESTIM`, the final reconstructed sound
-speed image. Optional fields enable richer reports:
+The example demonstrates syntax, not calibrated settings. Explicitly resolve
+sound-speed bounds and PML thickness for your grid. Expert YAML may configure
+`matlab_executable`, `cuda_visible_devices`, `runtime_root`, `scratch_root`,
+and reference-only `backend: cpu`. These controls are hidden from Agent admission.
 
-| Field | Meaning |
-| --- | --- |
-| `C_INTERP` | Ground-truth sound speed used for FWI-native metrics. |
-| `VEL_ESTIM_ITER` | Sound-speed images over iterations. |
-| `LOSS_ITER` | Per-iteration loss curve and iteration count. |
-| `VEL_INIT` | Initial sound-speed model. |
-| `psnr_value`, `ssim_value` | Native external metrics, if saved. |
-| `datasetPath` | External dataset path recorded by the FWI pipeline. |
+## Existing observations
 
-If `run_external: true` is enabled in the config, `USCT_KWAVE_ROOT` must point
-to the external solver checkout. If `USCT_KWAVE_PYTHON_BIN` is unset, the
-adapter uses the current Python interpreter.
+Supply complex total pressure `freq_data[frequency,tx,rx]`, positive unique
+`frequencies_hz`, and an explicit binary `valid_mask[tx,rx]` or
+`valid_mask[frequency,tx,rx]`. Valid zeros remain data. Travel times,
+scattered-only fields, water ratios and phase-only measurements are not accepted.
 
-## Configure an Existing Diffusion + FWI Result
+Case metadata must include `pressure_contract` with `fourier_sign` (-1 or +1),
+`real_pressure`, `pressure_type: total_pressure`, `data_units`, and
+`spectrum_normalization`, using WUST-supported declarations. The documented
+pressure-preserving k-Wave importer supplies an explicit positive-DTFT quadrature;
+a time-harmonic sign alone cannot establish the transform convention.
 
-This pre-existing optional adapter is unchanged by the physics-validation work.
+BenchLab writes generic frequency input with image axes [y,x], spacing [dy,dx],
+pixel-edge origin, and exactly one physical-coordinate swap from public [y,x]
+to [x,y]. WUST ingestion owns sorting, pressure canonicalization, Fourier
+conversion, snapping and MATLAB indexing. GT never creates/modifies observations.
+WUST fits complex source scale per TX/frequency; neither water reference nor
+Born source spectrum is required.
 
-Set:
+## Initialization and update region
 
-```bash
-export USCT_DPS_FWI_RESULT_PATH=/path/to/dps_result.mat
-export USCT_DPS_FWI_SUMMARY_PATH=/path/to/dps_result.json
-export USCT_DPS_DATASET_PATH=/path/to/kwave_dataset.mat
-export USCT_DPS_CHECKPOINT=/path/to/diffusion_checkpoint.pth
-```
+Agent initialization is `reference` (requires case
+`reference_sound_speed_mps`) or `scalar` with `initial_sound_speed_mps`.
+Experts can supply `initialization: map` and `initial_map_mps`.
+Maps must match exact grid/bounds without resizing or clipping. No arbitrary
+artifact resolver is advertised.
 
-Then run:
+The default scientific update mask excludes pixels within PML thickness plus
+one maximum grid spacing of each image edge. Experts may override `update_mask`.
+WUST independently validates numerical/PML constraints and never silently crops
+an invalid request. GT never defines the mask.
 
-```bash
-usct run diffusion_fwi_kwave_adapter \
-  --case "$USCT_WORKSPACE/data/openbreastus_demo/cases/example_case.h5" \
-  --config configs/algorithms/diffusion_fwi_kwave.yaml \
-  --out runs/single_diffusion_fwi
-```
+## Schedules and completion
 
-The DPS MAT file may contain any of these sound-speed fields:
+`frequency_schedule_hz` uses exact matches against WUST's canonical frequencies.
+Null means one update per available frequency; repetitions repeat updates.
+Empty schedule or zero iteration budget yields validated initialization only.
 
-| Field | Meaning |
-| --- | --- |
-| `VEL_DPS_PHYS` | Preferred selected reconstruction in physics-grid coordinates. |
-| `VEL_DPS_VIEW` | Preferred selected reconstruction in display/view coordinates. |
-| `VEL_FINAL_PHYS` | Final physical-grid reconstruction fallback. |
-| `VEL_FINAL_VIEW` | Final display/view reconstruction fallback. |
-| `VEL_INIT_VIEW` | Initial model, used for diagnostic metrics when available. |
-| `GT_VIEW` | External ground truth, used only when the case has no ground truth. |
+Executed updates are the minimum of schedule length, requested max_iterations,
+and budget cap max_iterations. One required monotonic elapsed-time budget covers
+serialization, discovery/probe, ingestion, reconstruction and parsing.
+Timeout terminates the runtime and returns failure with budget semantics, not
+a success image. Forward/adjoint-call caps, non-null update_rtol, legacy stopping,
+online numerical convergence and validation selection are unsupported.
 
-The JSON summary is optional, but it is the preferred source for provenance:
-checkpoint, dataset path, frequency schedule, diffusion-prior settings, and
-selected-step metadata.
+Optimization variable: slowness. Update variable: full slowness in s/m.
+Relative L2 change over the declared update mask is normalized by the previous
+slowness norm and is diagnostic only. One frequency-schedule item equals one
+complete update. Schedule completion is not convergence. Truncation and zero
+updates report max_iterations with budget semantics.
 
-## Run the Demo Suite
+## Results and validation
 
-```bash
-export USCT_KWAVE_FWI_CASE_GLOB="$USCT_WORKSPACE/data/fwi_kwave_demo/cases/*.h5"
-usct bench --suite configs/benchmarks/fwi_kwave_demo.yaml
-```
+Authoritative float64 c_mps[y,x] maps directly to the result. Per-update loss
+and residual are **before-update diagnostics**, not final-model residuals.
+Unavailable final residual remains null. GT is used only for post-run metrics.
 
-```bash
-export USCT_DPS_FWI_CASE_GLOB="$USCT_WORKSPACE/data/fwi_kwave_demo/cases/*.h5"
-usct bench --suite configs/benchmarks/diffusion_fwi_kwave_demo.yaml
-```
+Results retain records, resolved config, schedules, budgets, exact source
+identity, MATLAB/GPU/CUDA/MEX facts, and input/output hashes. Interchange files
+and logs stay in the run's wust_directory, outside source-control assets.
 
-## Outputs
-
-The adapter writes the standard package artifacts:
-
-```text
-runs/single_fwi/<case_id>/result.h5
-runs/single_fwi/<case_id>/metrics.json
-runs/single_fwi/<case_id>/metadata.yaml
-runs/single_fwi/<case_id>/preview.png
-```
-
-When ground truth is present, metrics include image quality fields such as
-RMSE, SSIM, PSNR, and baseline-improvement values.
-
-## Scope
-
-`fwi_kwave_adapter` and `diffusion_fwi_kwave_adapter` are adapter routes. They
-do not vendor a production k-Wave, MATLAB, or diffusion model implementation
-into this package. External solver setup remains the responsibility of the user
-environment.
-
-## Sound-speed-only scope
-
-Only sound-speed estimates, initialization, iteration/loss history and permitted
-GT diagnostics are imported. Unknown material-result arrays in legacy MAT files
-are ignored, not reinterpreted or serialized.
-
-The legacy command builder fixes simulation absorption coefficients to zero and
-disables joint material-update stages. `a0` is Helmholtz PML strength, not a
-material initialization. Existing datasets and warm-start artifacts may carry
-other fixed physics; importing a result does not certify those assumptions.
-Runtime inspection/enforcement and integration with `lucian-dw/WaveformInversionUST`
-are deferred to Round 4. No runtime fork is introduced here.
+`scripts/validate_wust_integration.py` runs the real cross-repository gate on an
+independently generated coherent fixture. Normal tests use protocol stubs.
+Fresh-MEX provenance, GPU numerical checks, CPU/GPU comparisons and representative
+deployment-size reconstruction are release gates; CPU and tiny runs alone do
+not establish production certification.

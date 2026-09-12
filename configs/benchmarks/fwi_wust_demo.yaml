@@ -1,0 +1,10 @@
+name: fwi_wust_demo
+case_glob: ${USCT_WUST_CASE_GLOB:-data/fwi_wust_demo/cases/*.h5}
+outputs:
+  root: ${USCT_RUN_ROOT:-runs}
+algorithms:
+  - name: fwi_wust
+    config: configs/algorithms/fwi_wust.yaml
+min_cases: 1
+min_records: 1
+expected_statuses: [success]

@@ -43,17 +43,13 @@ physical constant. Penalty amplitudes have objective/operator-dependent units.
 | `irls`, `huber_irls` robust loss | `huber` |
 | `ray_weight_min`, `ray_weight_threshold` | `min_ray_weight` |
 | `roi_aware_laplacian` | `roi_laplacian` |
-| FWI `c_init`, `velocity_bounds` | `initial_sound_speed_mps`, `sound_speed_bounds_mps` |
-| FWI `sos_freqs_mhz` | `sos_frequencies_hz`; explicit MHz-to-Hz conversion |
 | `iterations`, `outer_iterations`, Tiny `steps` | Checked legacy run budgets, not typed algorithm hyperparameters |
 | Fixed Born `inner_iterations` | Checked total iteration budget, not a nonlinear inner solve |
 | `parameters.stopping` | Checked legacy policy; remains opt-in compatibility, not the Agent interface |
 | SIRT/SART `regularization_lambda`, CGLS `subsets`, straight-ray `inner_iterations` | Reject: these settings never controlled those solvers; remove from shared dictionaries |
 | Bent `roi_laplacian` | Reject: it was only recorded in metadata, not applied as a separate Bent regularizer switch |
 
-Equivalent aliases are accepted; conflicting aliases/budgets fail. The FWI
-external command builder receives its legacy flag spelling only at the runtime
-boundary. Typed objects use canonical names and Hz schedules.
+Equivalent native aliases are accepted; conflicting aliases/budgets fail. WUST uses only its canonical typed parameters, with no legacy execution aliases.
 
 Fixed Born normalizes `inner_iterations` before checking `iterations`, legacy
 `stopping.max_iterations` and `run_controls.max_iterations`; repeated validation
@@ -63,14 +59,6 @@ Its `steps` loop and post-hoc image evaluation remain unchanged.
 
 Both Born models allow `max_cache_bytes=0` (no Green cache) and require
 `0 < green_solver_rtol < 1`, matching the numerical operator.
-
-External FWI null aliases mean unspecified; a non-null canonical or alias value
-takes precedence over null, while conflicting non-null values fail. Legacy CLI
-frequency and iteration schedules and device ids accept scalars as singleton
-sequences. Bounds still require two ordered values. Agent canonical admission
-remains strict and does not inherit these expert compatibility conversions.
-An omitted/null `baseline_sound_speed_mps` uses the case's
-`reference_sound_speed_mps`, falling back to 1500 m/s only if absent.
 
 New callers put budgets in `run_controls` / `budget_caps`. The loader now
 preserves these top-level fields (previously it discarded them). Existing YAML
@@ -85,18 +73,9 @@ residual curves before/after validation, not only successful process exits.
 
 ## Supported configurations and boundaries
 
-All YAMLs in `configs/algorithms/` use this contract except
-`diffusion_fwi_kwave.yaml`. That pre-existing optional external adapter is not
-migrated in rounds 1/2, has no approved autonomous parameter API, and must remain
-an expert-only legacy integration. It is not a source of Agent defaults. Its
-existing loader/workflow is preserved, not silently reinterpreted.
+All algorithm YAML files use validated typed models. Production `fwi_wust` uses the small `WUSTParameters` model. Bounds and PML must be explicitly supplied for execution. Reference initialization requires declared case reference speed; there is no injected 1500 m/s fallback. Initialization maps and deployment paths are expert/internal only.
 
-Production FWI import/launch configuration is distinct from controlled FWI.
-Unspecified external numerical defaults remain delegated. External result import
-does not perform reconstruction; its runtime cannot enforce online RunControls.
-Unsupported run controls therefore fail explicitly instead of claiming they were
-applied. Tiny FWI supports only its existing `steps` budget. Runtime refactoring
-and shared external deadlines are later work, not implemented by parameter schemas.
+WUST accepts only iteration and elapsed-time budgets. One schedule entry is one update; repeated Hz values repeat updates. Schedule truncation occurs after WUST ingestion. A single hard deadline includes all subprocesses and interchange work. Call caps, non-null `update_rtol` and legacy stopping dictionaries are rejected. CPU is reference-only; production requires the pinned CUDA runtime. See [fwi.md](fwi.md).
 
 Calibration arrays are validated runtime inputs, never Agent hyperparameters.
 Initial/background image arrays remain expert-only; default Agent interfaces

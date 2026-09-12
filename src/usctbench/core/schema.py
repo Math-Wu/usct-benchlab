@@ -149,6 +149,8 @@ class MeasurementSpec(_ArrayModel):
     def _coerce_valid_mask(cls, value: Any) -> np.ndarray | None:
         array = _optional_array(value)
         if array is not None:
+            if not np.isin(array, [0, 1]).all():
+                raise ValueError("valid_mask must contain only 0/1")
             array = array.astype(bool, copy=False)
         return array
 
@@ -237,6 +239,13 @@ class USCTCase(_ArrayModel):
             "measurement.ray_weights": self.measurement.ray_weights,
         }
         for name, value in arrays.items():
+            if (
+                name == "measurement.valid_mask"
+                and value is not None
+                and self.measurement.freq_data is not None
+                and value.shape == self.measurement.freq_data.shape
+            ):
+                continue
             if value is not None and value.shape != expected_shape:
                 raise ValueError(f"{name} must match (n_tx, n_rx)={expected_shape}")
         measurement = self.measurement

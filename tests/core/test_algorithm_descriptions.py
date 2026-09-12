@@ -112,16 +112,16 @@ def test_external_fwi_agent_admission_stays_canonical_and_strict():
         {"sound_speed_bounds_mps": 1500.0},
     ):
         with pytest.raises(ValueError):
-            make_agent_config("fwi_kwave_adapter", values, variant="external_pipeline")
+            make_agent_config("fwi_wust", values)
     config = make_agent_config(
-        "fwi_kwave_adapter",
+        "fwi_wust",
         {
+            "initialization": "scalar",
             "initial_sound_speed_mps": 1490.0,
             "sound_speed_bounds_mps": [1400.0, 1600.0],
         },
-        variant="external_pipeline",
     )
-    assert config.parameters["c_init"] == 1490.0
+    assert config.parameters["initial_sound_speed_mps"] == 1490.0
     assert "baseline_sound_speed_mps" not in config.parameters
 
 
@@ -155,22 +155,21 @@ def test_observation_and_runtime_variants_are_not_guessed_from_names():
     fixed = SPECS["rwave_adapter"].describe("wkb_fixed")
     assert "max_update_mps" not in fixed["allowed_parameters"]
     assert fixed["compute_budget"]["default_max_iterations"] == 30
-    imported = SPECS["fwi_kwave_adapter"].describe()
-    controlled = SPECS["fwi_kwave_adapter"].describe("controlled")
-    assert imported["allowed_parameters"] == []
-    assert imported["compute_budget"]["online_controls_supported"] is False
-    assert controlled["compute_budget"]["online_controls_supported"] is True
+    fwi = SPECS["fwi_wust"].describe()
+    assert fwi["family"] == "full_wave"
+    assert fwi["compute_budget"]["online_controls_supported"] is True
+    assert fwi["compute_budget"]["numerical_convergence_stopping_supported"] is False
+    assert fwi["required_observations"]["any_of"] == []
     with pytest.raises(ValueError, match="conflicts"):
         make_agent_config(
             "rwave_adapter",
             {"green_backend": "volume_integral"},
             variant="wkb_nonlinear",
         )
-    with pytest.raises(ValueError, match="does not enforce"):
+    with pytest.raises(ValueError, match="iteration/time budgets"):
         make_agent_config(
-            "fwi_kwave_adapter",
-            variant="external_pipeline",
-            run_controls={"max_iterations": 1},
+            "fwi_wust",
+            run_controls={"max_forward_calls": 1},
         )
 
 
@@ -207,7 +206,7 @@ def test_json_stdout_cli_and_case_capabilities(capsys, tmp_path):
     output = capsys.readouterr()
     entries = json.loads(output.out)
     assert output.err == ""
-    assert len(entries) == 8
+    assert len(entries) == 7
     assert all(entry["algorithm_id"] != "attenuation_sirt" for entry in entries)
     with pytest.raises(KeyError):
         get_algorithm("attenuation_sirt")
@@ -215,10 +214,9 @@ def test_json_stdout_cli_and_case_capabilities(capsys, tmp_path):
         schema = entry.get("config_schema", {})
         assert "attenuation_frequencies_hz" not in json.dumps(schema)
         assert "attenuation_upper_np_per_m" not in json.dumps(schema)
-    legacy = next(
-        row for row in entries if row["algorithm_id"] == "diffusion_fwi_kwave_adapter"
-    )
-    assert legacy["typed_interface_available"] is False
+    assert not {"fwi_kwave_adapter", "diffusion_fwi_kwave_adapter"} & {
+        row["algorithm_id"] for row in entries
+    }
     path = tmp_path / "case.h5"
     write_case_hdf5(make_sound_speed_case(shape=(8, 8), n_transducers=8), path)
     assert (

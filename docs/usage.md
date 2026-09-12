@@ -37,9 +37,6 @@ export USCT_WORKSPACE=/path/to/usct-benchlab
 export USCT_DATA_ROOT=$USCT_WORKSPACE/data/openbreastus
 export USCT_RUN_ROOT=$USCT_WORKSPACE/runs/usctbench_runs
 export USCT_NBP_ZIP_PATH=/path/to/NBPslices2D.zip
-export USCT_KWAVE_FWI_RESULT_PATH=/path/to/fwi_result.mat
-export USCT_KWAVE_ROOT=/path/to/external/USCT_kwave
-export USCT_KWAVE_PYTHON_BIN=/path/to/python
 ```
 
 Prepare directories:
@@ -174,55 +171,17 @@ usct run rwave_adapter \
 water pressure. See [physics validation](physics_validation.md) to generate and
 import a pressure pair. ToF-only cases are rejected explicitly.
 
-## Run FWI Adapter
-
-Set an external artifact path:
+## Run WUST FWI
 
 ```bash
-export USCT_KWAVE_FWI_RESULT_PATH=/path/to/fwi_result.mat
-export USCT_KWAVE_ROOT=/path/to/external/USCT_kwave
-export USCT_KWAVE_PYTHON_BIN=/path/to/python
-```
-
-The result MAT file must contain `VEL_ESTIM`. Optional fields such as
-`C_INTERP`, `VEL_ESTIM_ITER`, and `LOSS_ITER` enable ground-truth metrics and
-iteration selection.
-
-Run:
-
-```bash
-usct run fwi_kwave_adapter \
-  --case "$USCT_WORKSPACE/data/openbreastus_demo/cases/example_case.h5" \
-  --config configs/algorithms/fwi_kwave.yaml \
+export USCT_WUST_ROOT=/path/to/approved/WaveformInversionUST
+usct run fwi_wust \
+  --case /path/to/frequency_case.h5 \
+  --config configs/algorithms/fwi_wust.yaml \
   --out runs/single_fwi
 ```
 
-The adapter can also construct and call an external command when configured to
-do so, but release tests focus on artifact ingestion and reporting.
-
-## Run Diffusion + FWI Adapter
-
-Set external DPS artifact paths:
-
-```bash
-export USCT_DPS_FWI_RESULT_PATH=/path/to/dps_result.mat
-export USCT_DPS_FWI_SUMMARY_PATH=/path/to/dps_result.json
-export USCT_DPS_DATASET_PATH=/path/to/kwave_dataset.mat
-export USCT_DPS_CHECKPOINT=/path/to/diffusion_checkpoint.pth
-```
-
-Run:
-
-```bash
-usct run diffusion_fwi_kwave_adapter \
-  --case "$USCT_WORKSPACE/data/openbreastus_demo/cases/example_case.h5" \
-  --config configs/algorithms/diffusion_fwi_kwave.yaml \
-  --out runs/single_diffusion_fwi
-```
-
-The default config is loader-only. Set `run_external: true` only in an
-environment where the external USCT-kwave package, checkpoint, CUDA device,
-MATLAB/k-Wave runtime, and dataset path are deliberately available.
+Prepare an existing complex total-pressure case and install the exact approved WUST runtime described in [fwi.md](fwi.md). CUDA is required for production; CPU is a reference backend. No GT-generated measurements or automatic resize are used.
 
 ## Run Benchmark
 
@@ -247,14 +206,9 @@ usct bench --suite configs/benchmarks/openbreastus_demo.yaml
 FWI:
 
 ```bash
-usct bench --suite configs/benchmarks/fwi_kwave_demo.yaml
+usct bench --suite configs/benchmarks/fwi_wust_demo.yaml
 ```
 
-Diffusion + FWI:
-
-```bash
-usct bench --suite configs/benchmarks/diffusion_fwi_kwave_demo.yaml
-```
 
 Run all available demos:
 

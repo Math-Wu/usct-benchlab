@@ -61,23 +61,9 @@ Clipped or unfinished peak refinement is invalid. This is conservative local
 quality control, not a proof of a unique global maximum; distant peak switches
 remain nonsmooth and require nonlinear acceptance checks.
 
-## Full-wave reference bridge
+## Full-wave runtime
 
-The optional bridge calls an installed WaveformInversionUST `HelmholtzSolver.m`
-and `stencilOptParams.m` to export the actual optimized nine-point operator. It
-requires the constructor's fixed-velocity-bounds argument supported by the
-validated external installation; arbitrary upstream versions are not certified.
-It freezes those stencil weights during differentiation and includes PML and
-off-diagonal mass terms. MATLAB column-major indexing is explicitly permuted to
-NumPy row-major indexing. The external `sign_conv=-1` convention is conjugated
-at the public pressure boundary when necessary.
-
-This is a CPU sparse-LU reference interface for finite-difference, adjoint and
-online-control tests. It does not replace the existing production CUDA solver,
-filtered gradients, or PR/FR update trajectory. `controlled_operator: true`
-explicitly selects its reference Gauss-Newton loop. Production artifact import
-continues to work but rejects online stopping/holdout requests it cannot enforce.
-It records an unavailable external stop reason instead of inventing one.
+Production FWI is `fwi_wust`. WUST owns the Helmholtz forward/adjoint and source-projected gradients; BenchLab calls its external protocol, not a matrix-export bridge. Slowness is the optimization variable; the update is full slowness in s/m with L2 norm over the declared update mask. Relative updates are diagnostics, not convergence stops. See [fwi.md](fwi.md).
 
 ## Sources and independent references
 

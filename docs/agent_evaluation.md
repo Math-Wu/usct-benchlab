@@ -113,12 +113,13 @@ Gauss-Newton outer step, and one external FWI iteration are **not** equivalent w
 
 ## Integration and evidence
 
-CGLS, SIRT, SART, Eikonal, native Ray-Born and the opt-in controlled Helmholtz
-bridge call this monitor inside their loops. Completed checkpoints, not partially
+CGLS, SIRT, SART, Eikonal and native Ray-Born
+call this monitor inside their loops. Completed checkpoints, not partially
 computed updates, are returned after budget exhaustion. Ray-Born setup and water
-calibration are also counted in current code. The production external FWI result
-adapter rejects unsupported online-control requests and marks its external stop
-reason unavailable. Importing a finished artifact never retroactively stops it.
+calibration are also counted in current code. Production WUST uses schedule
+truncation and a shared hard elapsed-time deadline, not this online numerical
+monitor. Its schedule completion is not convergence. Before-update pressure
+residuals are not reported as final-model residuals. See [fwi.md](fwi.md).
 
 `evaluation.receiver`, `evaluation.frequency` and `evaluation.joint` contain
 disjoint holdout statistics. Full-pressure and contrast-pressure residuals are

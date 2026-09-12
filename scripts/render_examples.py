@@ -19,7 +19,7 @@ DEFAULT_ALGORITHMS = [
     "straight_sart",
     "bent_ray_gn",
     "rwave_adapter",
-    "fwi_kwave_adapter",
+    "fwi_wust",
 ]
 DEFAULT_LABELS = ["CGLS", "SIRT", "SART", "Bent-ray", "rWave", "FWI"]
 
@@ -271,12 +271,8 @@ def _write_panel(
 def _metric_text(metrics: dict[str, Any]) -> str:
     if metrics.get("missing"):
         return "missing"
-    psnr_key = (
-        "kwave_native_psnr" if _is_number(metrics.get("kwave_native_psnr")) else "psnr"
-    )
-    ssim_key = (
-        "kwave_native_ssim" if _is_number(metrics.get("kwave_native_ssim")) else "ssim"
-    )
+    psnr_key = "psnr"
+    ssim_key = "ssim"
     if _is_number(metrics.get(psnr_key)):
         text = f"PSNR {float(metrics[psnr_key]):.1f}"
         if _is_number(metrics.get(ssim_key)):
@@ -292,10 +288,6 @@ def _metric_subset(metrics: dict[str, Any]) -> dict[str, Any]:
         "psnr",
         "data_relative_residual",
         "data_residual_reduction",
-        "kwave_gt_rmse",
-        "kwave_gt_ssim",
-        "kwave_native_psnr",
-        "kwave_native_ssim",
     ]
     return {key: metrics[key] for key in keys if key in metrics}
 
