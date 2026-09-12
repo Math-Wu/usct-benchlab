@@ -4,11 +4,11 @@ from scipy.optimize import minimize_scalar
 
 from usctbench.core.schema import GeometrySpec, GridSpec
 from usctbench.operators import adjoint_error
-from usctbench.operators.forward.eikonal import EikonalForward, fast_march
+from usctbench.operators.eikonal import EikonalForward, fast_march
 
 
 def test_compiled_marching_matches_reference_discretization():
-    from usctbench.operators.forward.eikonal import fast_march
+    from usctbench.operators.eikonal import fast_march
 
     rng = np.random.default_rng(18)
     model = 1 / (1500 + rng.uniform(-30, 30, (21, 23)))

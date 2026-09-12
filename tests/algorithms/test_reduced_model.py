@@ -9,7 +9,7 @@ from usctbench.algorithms.ray import (
 from usctbench.algorithms.bent_ray import BentRayGNAdapter
 from usctbench.core.schema import AlgorithmConfig, GroundTruthSpec
 from usctbench.data.synthetic import make_sound_speed_case
-from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.operators.eikonal import EikonalForward
 
 
 @pytest.mark.parametrize(

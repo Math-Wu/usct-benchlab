@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from usctbench.core.schema import GeometrySpec, GridSpec
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 
 
 def projector():

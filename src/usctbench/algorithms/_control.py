@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from usctbench.core.config import coerce_bool
+from usctbench.core.run_controls import RunControls
 from usctbench.core.stopping import StopMonitor, StopPolicy, WorkLedger
 from usctbench.evaluation.data import make_data_split, residual_statistics
 from usctbench.metrics import (
@@ -38,8 +39,17 @@ class InversionControl:
             rx_positions=case.geometry.rx_pos_m,
             **settings,
         )
-        self.policy = StopPolicy.from_parameters(
-            config.parameters, default_iterations=default_iterations
+        self.policy = (
+            (config.run_controls or RunControls()).to_stop_policy(
+                default_iterations=config.parameters.get(
+                    "iterations", default_iterations
+                ),
+                budget=config.budget_caps,
+            )
+            if config.run_controls is not None or config.budget_caps is not None
+            else StopPolicy.from_parameters(
+                config.parameters, default_iterations=default_iterations
+            )
         )
         if self.policy.validation_patience is not None and not np.any(
             self.split.validation
@@ -57,6 +67,34 @@ class InversionControl:
         self.precision = np.where(self.split.train, self.split.weights, 0.0)
         self.safe_observed = np.where(self.split.train, self.observed, 0)
         self.last_prediction = self.best_prediction = None
+        self.update_semantics = {
+            "optimization_variable": None,
+            "update_variable": None,
+            "update_units": None,
+            "update_norm": None,
+            "update_norm_scope": None,
+            "update_normalization": None,
+        }
+
+    def declare_update(
+        self,
+        optimization_variable,
+        update_variable,
+        units,
+        *,
+        scope="full_physical_grid",
+        normalization=None,
+    ):
+        """Describe the actual statistic without changing the numerical path."""
+        self.update_semantics = {
+            "optimization_variable": optimization_variable,
+            "update_variable": update_variable,
+            "update_units": units,
+            "update_norm": "euclidean_l2",
+            "update_norm_scope": scope,
+            "update_normalization": normalization
+            or "norm(q_new-q_old)/max(norm(q_old),float64_tiny)",
+        }
 
     def call(self, kind, function, *args, **kwargs):
         return self.work.call(kind, function, *args, **kwargs)
@@ -139,6 +177,14 @@ class InversionControl:
         )
         prediction = self.best_prediction if selected_best else self.last_prediction
         stop = self.monitor.record()
+        stop.update(self.update_semantics)
+        stop["resolved_policy"] = dict(stop["policy"])
+        stop["policy_source"] = (
+            "run_controls_with_budget_caps"
+            if self.config.run_controls is not None
+            or self.config.budget_caps is not None
+            else "legacy_parameters_with_legacy_defaults"
+        )
         metrics = {
             "stop_reason": stop["reason"],
             "stopping": stop,

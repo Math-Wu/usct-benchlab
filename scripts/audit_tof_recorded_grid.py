@@ -9,7 +9,7 @@ import numpy as np
 from scipy.ndimage import map_coordinates
 from usctbench.core.io import read_case_hdf5
 from usctbench.core.schema import GridSpec, GeometrySpec
-from usctbench.operators.forward.eikonal import EikonalForward, fast_march
+from usctbench.operators.eikonal import EikonalForward, fast_march
 
 
 def main():

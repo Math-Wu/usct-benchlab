@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from usctbench.algorithms.ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.core.io import write_case_hdf5
 from usctbench.core.provenance import MeasurementProvenance, stamp_measurement_metadata
 from usctbench.core.schema import (

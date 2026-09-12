@@ -5,7 +5,7 @@ from usctbench.data.calibration import fit_water_source
 from usctbench.algorithms.rwave import RWaveAdapter
 from usctbench.core.schema import AlgorithmConfig, MeasurementSpec, GroundTruthSpec
 from usctbench.data.synthetic import make_sound_speed_case
-from usctbench.operators.forward.ray_born import RayBornOperator
+from usctbench.operators.ray_born import RayBornOperator
 
 
 def test_complex_calibration_known_sources_and_missing_channels():

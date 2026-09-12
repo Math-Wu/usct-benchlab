@@ -12,8 +12,8 @@ from usctbench.algorithms.ray import (
 from usctbench.core.schema import AlgorithmConfig
 from usctbench.data.synthetic import make_sound_speed_case
 from usctbench.operators.base import Linearization
-from usctbench.operators.forward.eikonal import EikonalForward
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.eikonal import EikonalForward
+from usctbench.operators.straight_ray import StraightRayProjector
 
 
 @pytest.mark.parametrize(

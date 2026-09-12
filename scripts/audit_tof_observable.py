@@ -8,7 +8,7 @@ import time
 import numpy as np
 from usctbench.core.io import read_case_hdf5
 from usctbench.data.arrival import water_relative_delays
-from usctbench.operators.forward.eikonal import EikonalForward, fast_march
+from usctbench.operators.eikonal import EikonalForward, fast_march
 from usctbench.core.schema import GeometrySpec, GridSpec
 
 

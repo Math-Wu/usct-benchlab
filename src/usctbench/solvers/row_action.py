@@ -115,9 +115,14 @@ def row_action(
             prediction = control.call("forward", operator.forward, x).reshape(
                 control.observed.shape
             )
-            relative_update = float(
-                np.linalg.norm(x - previous)
-                / max(np.linalg.norm(reference + previous), np.finfo(float).tiny)
+            denominator = np.linalg.norm(reference + previous)
+            relative_update = (
+                float(
+                    np.linalg.norm(x - previous)
+                    / max(denominator, np.finfo(float).tiny)
+                )
+                if denominator > 0
+                else None
             )
             if control.observe(
                 iteration,

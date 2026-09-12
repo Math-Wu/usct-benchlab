@@ -17,7 +17,7 @@ from scipy.sparse import coo_matrix, diags
 from scipy.sparse.linalg import splu
 
 from usctbench.operators.base import Linearization
-from usctbench.operators.forward.eikonal import interpolation
+from usctbench.operators.eikonal import interpolation
 
 
 class MatlabHelmholtzForward:

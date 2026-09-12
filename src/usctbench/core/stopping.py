@@ -22,6 +22,7 @@ class StopPolicy:
     noise_norm: float | None = None
     discrepancy_factor: float = 1.05
     update_rtol: float | None = 1e-6
+    update_patience: int = 1  # Legacy behavior; RunControls defaults to two.
     objective_rtol: float | None = 1e-6
     objective_patience: int = 5
     validation_patience: int | None = None
@@ -49,7 +50,12 @@ class StopPolicy:
             if not isinstance(getattr(self, name), (bool, np.bool_)):
                 raise ValueError(f"{name} must be a boolean")
             object.__setattr__(self, name, bool(getattr(self, name)))
-        for name in ("max_iterations", "min_iterations", "objective_patience"):
+        for name in (
+            "max_iterations",
+            "min_iterations",
+            "objective_patience",
+            "update_patience",
+        ):
             if getattr(self, name) is None:
                 raise ValueError(f"{name} cannot be null")
         integer_fields = (
@@ -58,6 +64,7 @@ class StopPolicy:
             "max_forward_calls",
             "max_adjoint_calls",
             "objective_patience",
+            "update_patience",
             "validation_patience",
         )
         for name in integer_fields:
@@ -70,7 +77,7 @@ class StopPolicy:
                 raise ValueError(f"{name} must be a nonnegative integer")
             if value is not None:
                 object.__setattr__(self, name, int(value))
-        for name in ("objective_patience", "validation_patience"):
+        for name in ("objective_patience", "validation_patience", "update_patience"):
             if getattr(self, name) == 0:
                 raise ValueError(f"{name} must be positive")
         for name in (
@@ -154,12 +161,20 @@ class StopMonitor:
         self.reason = None
         self.triggers = []
         self.plateau_count = 0
+        self.small_update_count = 0
         self.validation_bad_count = 0
         self.best_validation = None
         self.significant_validation = None
         self.best_state = None
         self.best_iteration = None
         self.last_state = None
+        self.stage_id = None
+
+    def set_stage(self, stage_id):
+        """Reset update patience at stage boundaries, never the global budget."""
+        if stage_id != self.stage_id:
+            self.small_update_count = 0
+            self.stage_id = stage_id
 
     def observe(
         self,
@@ -231,6 +246,7 @@ class StopMonitor:
                 "relative_residual": relative,
                 "objective": float(objective),
                 "relative_update": update_relative,
+                "stage_id": self.stage_id,
                 "validation_relative_residual": validation_relative,
                 "work": dict(self.work.counts),
             }
@@ -244,8 +260,19 @@ class StopMonitor:
             if limit is not None and self.work.counts[counter] >= limit:
                 triggers.append(f"{counter}_budget")
         # Exact fit and safety budgets do not wait for min_iterations.
-        if residual_norm == 0:
+        # Exact data fit alone is not stationarity when a penalty remains.
+        # A zero *complete* nonnegative objective is a certified minimum.
+        if residual_norm == 0 and objective == 0:
             triggers.append("exact_data_fit")
+        eligible_small_update = (
+            iteration >= p.min_iterations
+            and p.update_rtol is not None
+            and update_relative is not None
+            and update_relative <= p.update_rtol
+        )
+        self.small_update_count = (
+            self.small_update_count + 1 if eligible_small_update else 0
+        )
         if iteration >= p.min_iterations:
             if (
                 p.target_relative_residual is not None
@@ -263,7 +290,7 @@ class StopMonitor:
             if (
                 p.update_rtol is not None
                 and update_relative is not None
-                and update_relative <= p.update_rtol
+                and self.small_update_count >= p.update_patience
             ):
                 triggers.append("small_model_update")
             if (
@@ -321,9 +348,19 @@ class StopMonitor:
             ),
             "selected_iteration": selected,
             "iteration_unit": self.iteration_unit,
+            "stage_id": self.stage_id,
+            "selected_stage_id": next(
+                (
+                    row["stage_id"]
+                    for row in self.history
+                    if row["iteration"] == selected
+                ),
+                None,
+            ),
             "elapsed_s": self.work.elapsed_s,
             "work": dict(self.work.counts),
             "policy": asdict(self.policy),
+            "resolved_policy": asdict(self.policy),
             "budget_scope": "operator_calls; time_checked_between_calls",
             "ground_truth_used_for_stopping": self.policy.target_rmse_mps is not None,
             "has_complete_checkpoint": self.last_state is not None,

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 
 
 def apply_mask(

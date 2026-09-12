@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from usctbench.core.schema import MeasurementSpec
-from usctbench.operators.forward.eikonal import EikonalForward, fast_march
+from usctbench.operators.eikonal import EikonalForward, fast_march
 
 
 def diagnostic_case(case, delays_s, label):

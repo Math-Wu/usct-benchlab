@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from usctbench.core.schema import GeometrySpec, GridSpec
-from usctbench.operators.forward.eikonal import EikonalForward
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.eikonal import EikonalForward
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.operators.model_space import (
     BilinearBasis,
     FineGridRegularizer,

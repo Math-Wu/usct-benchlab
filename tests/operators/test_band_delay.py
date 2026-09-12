@@ -7,7 +7,7 @@ from usctbench.operators.forward.band_delay import (
     BandDelayLinearization,
     FiniteFrequencyTravelTimeForward,
 )
-from usctbench.operators.forward.ray_born import RayBornForward, RayBornOperator
+from usctbench.operators.ray_born import RayBornForward, RayBornOperator
 
 
 def observation():

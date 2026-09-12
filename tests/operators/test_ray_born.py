@@ -4,9 +4,9 @@ from scipy.special import hankel1
 
 from usctbench.core.schema import GeometrySpec, GridSpec
 from usctbench.operators import adjoint_error
-from usctbench.operators.forward.ray_born import RayBornOperator
-from usctbench.operators.forward.ray_born import RayBornForward
-from usctbench.operators.forward.volume_integral import VolumeIntegralGreen
+from usctbench.operators.ray_born import RayBornOperator
+from usctbench.operators.ray_born import RayBornForward
+from usctbench.operators.volume_integral import VolumeIntegralGreen
 
 
 def test_volume_solver_checks_deadline_inside_source_solve():

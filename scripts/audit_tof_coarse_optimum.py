@@ -14,7 +14,7 @@ from usctbench.benchmark.runner import run_algorithm_case
 from usctbench.cli import register_builtin_algorithms
 from usctbench.core.io import read_case_hdf5, read_result_hdf5
 from usctbench.metrics import compute_regional_image_metrics
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.operators.model_space import BilinearBasis
 
 

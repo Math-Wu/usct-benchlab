@@ -7,7 +7,7 @@ import json
 import time
 import numpy as np
 from usctbench.core.io import read_case_hdf5, write_case_hdf5
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 from tof_audit_common import diagnostic_case, streamed_eikonal_delta
 from usctbench.evaluation.data import make_data_split
 

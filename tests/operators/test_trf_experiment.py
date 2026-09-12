@@ -360,7 +360,7 @@ def test_solver_recovers_identifiable_wave_equation_model(optimizer):
         BandCorrelationDelay,
         FiniteFrequencyTravelTimeForward,
     )
-    from usctbench.operators.forward.ray_born import RayBornOperator, RayBornForward
+    from usctbench.operators.ray_born import RayBornOperator, RayBornForward
     from usctbench.operators.model_space import BilinearBasis
 
     path = (

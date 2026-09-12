@@ -23,8 +23,8 @@ from usctbench.operators.forward.correlation_delay import (
     CorrelationDelayDerivative,
     CorrelationTravelTimeJacobian,
 )
-from usctbench.operators.forward.ray_born import RayBornOperator, RayBornForward
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.ray_born import RayBornOperator, RayBornForward
+from usctbench.operators.straight_ray import StraightRayProjector
 from audit_tof_adaptation import stats, numerical_delays
 
 
