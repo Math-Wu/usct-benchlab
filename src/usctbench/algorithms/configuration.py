@@ -135,7 +135,9 @@ def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
     }
     LegacyIterations.model_validate(budget_keys)
     valid_budget_keys = {"iterations"}
-    if name in {"bent_ray_gn", "rwave_adapter"} or model is ControlledFWIParameters:
+    if (
+        name in {"bent_ray_gn", "rwave_adapter"} and model is not FixedBornParameters
+    ) or model is ControlledFWIParameters:
         valid_budget_keys.add("outer_iterations")
     if name == "fwi_tiny":
         valid_budget_keys = {"steps"}
@@ -203,6 +205,14 @@ def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
             if "iterations" in auxiliary and auxiliary["iterations"] != legacy:
                 raise ValueError("conflicting fixed-background iteration budgets")
             auxiliary["iterations"] = legacy
+            if (
+                config.run_controls is not None
+                and config.run_controls.max_iterations is not None
+                and config.run_controls.max_iterations != legacy
+            ):
+                raise ValueError(
+                    "conflicting fixed-background and run_controls iteration budgets"
+                )
     typed = model.model_validate(values)
     backend = typed.backend_parameters()
     if model is ExternalFWIParameters and (

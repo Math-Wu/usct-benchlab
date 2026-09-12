@@ -440,10 +440,12 @@ class StraightRaySARTAlgorithm:
 
 def register_ray_algorithms(*, replace: bool = False) -> None:
     """Register built-in straight-ray sound-speed algorithms."""
+    from usctbench.core.algorithm_specs import SPECS
 
     register_algorithm(
         "straight_sart",
         StraightRaySARTAlgorithm,
+        specification=SPECS["straight_sart"],
         description="Straight-ray SART sound-speed reconstruction.",
         tags=("ray", "sound-speed"),
         replace=replace,
@@ -451,6 +453,7 @@ def register_ray_algorithms(*, replace: bool = False) -> None:
     register_algorithm(
         "straight_sirt",
         StraightRaySIRTAlgorithm,
+        specification=SPECS["straight_sirt"],
         description="Straight-ray SIRT sound-speed reconstruction.",
         tags=("ray", "sound-speed"),
         replace=replace,
@@ -458,6 +461,7 @@ def register_ray_algorithms(*, replace: bool = False) -> None:
     register_algorithm(
         "straight_cgls",
         StraightRayCGLSAlgorithm,
+        specification=SPECS["straight_cgls"],
         description="Straight-ray CGLS sound-speed reconstruction.",
         tags=("ray", "sound-speed"),
         replace=replace,

@@ -83,7 +83,6 @@ def test_string_false_bool_parameters_do_not_enable_ray_options(synthetic_case):
                 **common,
                 "inner_iterations": 2,
                 "line_search": "false",
-                "roi_laplacian": "false",
             }
         ),
     )

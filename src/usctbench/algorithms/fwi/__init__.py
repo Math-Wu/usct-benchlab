@@ -10,9 +10,12 @@ from .tiny import TinyFWIAlgorithm
 
 
 def register_fwi_algorithms(*, replace: bool = False) -> None:
+    from usctbench.core.algorithm_specs import SPECS
+
     register_algorithm(
         "fwi_tiny",
         TinyFWIAlgorithm,
+        specification=SPECS["fwi_tiny"],
         description="Tiny synthetic waveform-inversion proof-of-life.",
         tags=("fwi", "synthetic", "sound-speed"),
         replace=replace,
@@ -20,6 +23,7 @@ def register_fwi_algorithms(*, replace: bool = False) -> None:
     register_algorithm(
         "fwi_kwave_adapter",
         KWaveFWIAdapterAlgorithm,
+        specification=SPECS["fwi_kwave_adapter"],
         description="Adapter for k-Wave/WaveformInversionUST MATLAB FWI results.",
         tags=("fwi", "kwave", "external"),
         replace=replace,

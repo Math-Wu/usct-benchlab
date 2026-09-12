@@ -49,6 +49,7 @@ physical constant. Penalty amplitudes have objective/operator-dependent units.
 | Fixed Born `inner_iterations` | Checked total iteration budget, not a nonlinear inner solve |
 | `parameters.stopping` | Checked legacy policy; remains opt-in compatibility, not the Agent interface |
 | SIRT/SART `regularization_lambda`, CGLS `subsets`, straight-ray `inner_iterations` | Reject: these settings never controlled those solvers; remove from shared dictionaries |
+| Bent `roi_laplacian` | Reject: it was only recorded in metadata, not applied as a separate Bent regularizer switch |
 
 Equivalent aliases are accepted; conflicting aliases/budgets fail. The FWI
 external command builder receives its legacy flag spelling only at the runtime

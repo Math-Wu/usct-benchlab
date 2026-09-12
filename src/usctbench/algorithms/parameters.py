@@ -255,7 +255,6 @@ class BentParameters(GaussNewtonParameters, RayParameters):
     )
     line_search: bool = parameter(True, "Enable objective backtracking.")
     eikonal_order: Literal[1, 2] = parameter(1, "Fast-marching spatial order.")
-    roi_laplacian: bool = parameter(False, "ROI-aware fine-grid regularizer.")
 
 
 class BornParameters(GaussNewtonParameters):
@@ -402,9 +401,15 @@ FixedBornParameters = create_model(
 )
 
 
-class TinyFWIParameters(SoundSpeedParameters):
+class TinyFWIParameters(Parameters):
+    sound_speed_bounds_mps: Bounds = parameter(
+        (1300.0, 1700.0), "Sanity-model projection bounds.", "m/s", "agent"
+    )
     frequencies_hz: list[Positive] = parameter(
-        [1e5, 1.5e5, 2e5], "Sanity-model frequencies, not a production schedule.", "Hz"
+        [1e5, 1.5e5, 2e5],
+        "Sanity-model frequencies, not a production schedule.",
+        "Hz",
+        min_length=1,
     )
     spacing_m: Positive | None = parameter(None, "Null uses case column spacing.", "m")
     initial_sound_speed_mps: Positive | None = parameter(

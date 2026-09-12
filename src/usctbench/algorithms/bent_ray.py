@@ -479,9 +479,12 @@ class BentRayGNAdapter:
 
 
 def register_bent_ray_algorithm(*, replace: bool = False) -> None:
+    from usctbench.core.algorithm_specs import SPECS
+
     register_algorithm(
         "bent_ray_gn",
         BentRayGNAdapter,
+        specification=SPECS["bent_ray_gn"],
         description="Native first-arrival Eikonal Gauss-Newton inversion.",
         tags=("travel-time", "refraction", "eikonal"),
         replace=replace,

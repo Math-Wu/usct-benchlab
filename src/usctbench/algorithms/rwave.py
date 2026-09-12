@@ -483,9 +483,12 @@ class RWaveAdapter:
 
 
 def register_rwave_algorithm(*, replace: bool = False) -> None:
+    from usctbench.core.algorithm_specs import SPECS
+
     register_algorithm(
         "rwave_adapter",
         RWaveAdapter,
+        specification=SPECS["rwave_adapter"],
         description="Native relinearized Ray-Born complex-pressure inversion.",
         tags=("ray-born", "frequency", "scattering"),
         replace=replace,
