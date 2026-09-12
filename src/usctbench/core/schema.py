@@ -276,6 +276,15 @@ class AlgorithmConfig(_ArrayModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def _typed_parameters(cls, value):
+        from usctbench.algorithms.parameters import Parameters
+
+        if isinstance(value, Parameters):
+            return value.model_dump(exclude_none=True)
+        return value
+
     @model_validator(mode="after")
     def _unambiguous_controls(self):
         # One owner for execution budgets: legacy YAML and typed controls must

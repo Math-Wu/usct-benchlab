@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import numpy as np
 from scipy.linalg import norm
 
@@ -35,6 +37,7 @@ class BentRayGNAdapter:
 
     name = "bent_ray_gn"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         return run_with_failure_capture(
             self.name, case, lambda: self._run(case, config)

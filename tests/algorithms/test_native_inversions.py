@@ -45,10 +45,12 @@ def test_native_inversions_reduce_residual_and_need_no_truth(physics, algorithm)
     case.ground_truth = GroundTruthSpec()
     config = AlgorithmConfig(
         parameters={
-            "mode": "fixed_background",
+            **(
+                {"mode": "fixed_background"}
+                if physics == "born"
+                else {"inner_iterations": 5}
+            ),
             "iterations": 5,
-            "outer_iterations": 2,
-            "inner_iterations": 5,
             "regularization_lambda": 3e-5,
             "evaluation": {"receiver_indices": [1]},
             "stopping": {"update_rtol": None, "objective_rtol": None},
@@ -84,9 +86,12 @@ def test_heldout_values_do_not_change_training_trajectory(physics, algorithm):
     # Disable validation checkpoint selection to compare optimization itself.
     config = AlgorithmConfig(
         parameters={
-            "mode": "fixed_background",
+            **(
+                {"mode": "fixed_background"}
+                if physics == "born"
+                else {"inner_iterations": 3}
+            ),
             "iterations": 2,
-            "inner_iterations": 3,
             "evaluation": {"receiver_indices": [1]},
             "stopping": {
                 "restore_best_validation": False,

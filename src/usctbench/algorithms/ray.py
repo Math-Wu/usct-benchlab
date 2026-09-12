@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import time
 from typing import Any
 
@@ -403,6 +405,7 @@ def run_with_failure_capture(
 class StraightRayCGLSAlgorithm:
     name = "straight_cgls"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         from usctbench.algorithms.straight import reconstruct
 
@@ -414,6 +417,7 @@ class StraightRayCGLSAlgorithm:
 class StraightRaySIRTAlgorithm:
     name = "straight_sirt"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         from usctbench.algorithms.straight import reconstruct
 
@@ -425,6 +429,7 @@ class StraightRaySIRTAlgorithm:
 class StraightRaySARTAlgorithm:
     name = "straight_sart"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         from usctbench.algorithms.straight import reconstruct
 

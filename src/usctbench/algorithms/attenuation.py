@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import numpy as np
 
 from usctbench.algorithms.ray import (
@@ -21,6 +23,7 @@ class AttenuationSIRTAlgorithm:
 
     name = "attenuation_sirt"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         def _run() -> ReconstructionResult:
             projector = StraightRayProjector.from_case(case)

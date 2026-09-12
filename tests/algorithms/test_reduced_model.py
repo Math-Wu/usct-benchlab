@@ -38,9 +38,12 @@ def test_model_prior_uses_no_gt_or_validation_for_updates_and_obeys_budget(name)
         parameters={
             "model_grid_shape": [4, 4],
             "iterations": 2,
-            "inner_iterations": 4,
-            "regularization": "laplacian",
-            "regularization_lambda": 0.0001,
+            **({"inner_iterations": 4} if name == "bent_ray_gn" else {}),
+            **(
+                {"regularization": "laplacian", "regularization_lambda": 0.0001}
+                if name in {"straight_cgls", "bent_ray_gn"}
+                else {}
+            ),
             "evaluation": {"receiver_indices": [1]},
             "stopping": {
                 "restore_best_validation": False,

@@ -59,11 +59,34 @@ def load_algorithm_config(path: str | Path) -> AlgorithmConfig:
         raise ValueError("config parameters must be a mapping")
     if not isinstance(metadata, dict):
         raise ValueError("config metadata must be a mapping")
-    return AlgorithmConfig(
+    from usctbench.algorithms.configuration import validate_algorithm_config
+
+    unknown = payload.keys() - {
+        "name",
+        "algorithm",
+        "parameters",
+        "metadata",
+        "run_controls",
+        "budget_caps",
+    }
+    if unknown:
+        raise ValueError(f"unknown algorithm config fields: {sorted(unknown)}")
+    if (
+        payload.get("name")
+        and payload.get("algorithm")
+        and payload["name"] != payload["algorithm"]
+    ):
+        raise ValueError("conflicting name/algorithm aliases")
+    config = AlgorithmConfig(
         name=payload.get("name") or payload.get("algorithm"),
         parameters=_expand_config_value(parameters),
         metadata=_expand_config_value(metadata),
+        run_controls=payload.get("run_controls"),
+        budget_caps=payload.get("budget_caps"),
     )
+    if config.name and config.name != "diffusion_fwi_kwave_adapter":
+        return validate_algorithm_config(config.name, config)
+    return config
 
 
 def run_algorithm_case(

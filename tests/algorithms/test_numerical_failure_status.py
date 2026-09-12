@@ -53,7 +53,10 @@ def test_nonfinite_prediction_fails_even_with_finite_recovery_checkpoint(
 
     monkeypatch.setattr(cls, method, broken)
     result = algorithm().run(
-        case, AlgorithmConfig(parameters={"iterations": 3, "inner_iterations": 2})
+        case,
+        AlgorithmConfig(
+            parameters={"iterations": 3, **({"inner_iterations": 2} if is_bent else {})}
+        ),
     )
     assert result.status == "failed", result.metrics.get("stop_reason")
     assert result.failure_reason
