@@ -157,13 +157,6 @@ class ExternalFWIParameters(Parameters):
     ncalc: PositiveInt | None = delegated("Simulation grid width", "pixels")
     xmax_mm: Positive | None = delegated("Simulation extent", "mm")
     circle_radius_mm: Positive | None = delegated("Array radius", "mm")
-    atten_bkgnd: Nonnegative | None = delegated(
-        "Legacy background attenuation", "external legacy units"
-    )
-    sos2atten: float | None = delegated(
-        "External speed-to-attenuation coefficient", "external legacy units"
-    )
-    y_atten: Nonnegative | None = delegated("External attenuation exponent")
     f_tx_mhz: Positive | None = delegated("Simulation transmit frequency", "MHz")
     downsample_factor: PositiveInt | None = delegated("Simulation downsampling")
     backend: str | None = delegated("External simulation backend")
@@ -183,8 +176,10 @@ class ExternalFWIParameters(Parameters):
         "Geometric preprocessing speed", "m/s", "advanced"
     )
     sign_conv: Literal[-1, 1] | None = delegated("Pressure sign convention")
-    a0: float | None = delegated(
-        "External attenuation initialization", "external legacy units", "advanced"
+    a0: Positive | None = delegated(
+        "Helmholtz PML strength, not a reconstructed material coefficient",
+        "1",
+        "advanced",
     )
     l_pml: Positive | None = delegated(
         "External PML setting", "external runtime units", "advanced"
@@ -219,19 +214,10 @@ class ExternalFWIParameters(Parameters):
     sos_frequencies_hz: list[Positive] | None = delegated(
         "Sound-speed frequency schedule", "Hz", "advanced"
     )
-    attenuation_frequencies_hz: list[Positive] | None = delegated(
-        "Joint speed/attenuation schedule", "Hz", "advanced"
-    )
     sos_iters: list[NonnegativeInt] | None = delegated(
         "Iterations per speed stage", "stage iterations", "advanced"
     )
-    atten_iters: list[NonnegativeInt] | None = delegated(
-        "Iterations per attenuation stage", "stage iterations", "advanced"
-    )
     crange: Bounds | None = delegated("External speed display range", "m/s")
-    attenrange: tuple[float, float] | None = delegated(
-        "External attenuation display range", "legacy units"
-    )
     overwrite: bool = parameter(
         False, "Allow external artifact overwrite.", exposure="internal"
     )
@@ -258,11 +244,8 @@ class ExternalFWIParameters(Parameters):
         for key in (
             "cuda_devices",
             "sos_freqs_mhz",
-            "sos_atten_freqs_mhz",
             "sos_iters",
-            "atten_iters",
             "crange",
-            "attenrange",
             "velocity_bounds",
         ):
             if key in values and values[key] is not None:
@@ -274,7 +257,6 @@ class ExternalFWIParameters(Parameters):
             ("c_init", "initial_sound_speed_mps", 1),
             ("velocity_bounds", "sound_speed_bounds_mps", 1),
             ("sos_freqs_mhz", "sos_frequencies_hz", 1e6),
-            ("sos_atten_freqs_mhz", "attenuation_frequencies_hz", 1e6),
         ):
             if old in values:
                 value = values.pop(old)
@@ -322,7 +304,6 @@ class ExternalFWIParameters(Parameters):
             ("initial_sound_speed_mps", "c_init", 1),
             ("sound_speed_bounds_mps", "velocity_bounds", 1),
             ("sos_frequencies_hz", "sos_freqs_mhz", 1e6),
-            ("attenuation_frequencies_hz", "sos_atten_freqs_mhz", 1e6),
         ):
             if canonical in values:
                 value = values.pop(canonical)
