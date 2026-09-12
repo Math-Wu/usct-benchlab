@@ -13,7 +13,6 @@ import numpy as np
 from pydantic import Field
 
 from usctbench.algorithms.parameters import (
-    AttenuationParameters,
     BentParameters,
     BornParameters,
     CGLSParameters,
@@ -37,7 +36,6 @@ PARAMETER_MODELS = {
     "straight_sart": SARTParameters,
     "bent_ray_gn": BentParameters,
     "rwave_adapter": BornParameters,
-    "attenuation_sirt": AttenuationParameters,
     "fwi_tiny": TinyFWIParameters,
 }
 
@@ -47,7 +45,6 @@ DEFAULT_ITERATIONS = {
     "straight_sirt": 50,
     "straight_sart": 10,
     "bent_ray_gn": 4,
-    "attenuation_sirt": 50,
     "fwi_tiny": 20,
 }
 

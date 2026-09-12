@@ -118,7 +118,6 @@ class MeasurementSpec(_ArrayModel):
     tof_first_arrival_s: np.ndarray | None = None
     tof_xcorr_s: np.ndarray | None = None
     phase_slope_delay_s: np.ndarray | None = None
-    log_amp: np.ndarray | None = None
     valid_mask: np.ndarray | None = None
     feature_quality: np.ndarray | None = None
     ray_weights: np.ndarray | None = None
@@ -137,7 +136,6 @@ class MeasurementSpec(_ArrayModel):
         "tof_first_arrival_s",
         "tof_xcorr_s",
         "phase_slope_delay_s",
-        "log_amp",
         "feature_quality",
         "ray_weights",
         mode="before",
@@ -178,13 +176,12 @@ class MeasurementSpec(_ArrayModel):
                     self.tof_first_arrival_s,
                     self.tof_xcorr_s,
                     self.phase_slope_delay_s,
-                    self.log_amp,
                     self.ray_weights,
                 )
             )
             if not has_feature:
                 raise ValueError(
-                    "feature-domain measurements require tof_s, delta_tof_s, or log_amp"
+                    "feature-domain measurements require a sound-speed ToF/delay feature or ray weights"
                 )
         return self
 
@@ -193,11 +190,10 @@ class GroundTruthSpec(_ArrayModel):
     """Optional image-domain ground truth for synthetic or labeled cases."""
 
     sound_speed_mps: np.ndarray | None = None
-    attenuation_np_per_m: np.ndarray | None = None
     density_kg_per_m3: np.ndarray | None = None
 
     @field_validator(
-        "sound_speed_mps", "attenuation_np_per_m", "density_kg_per_m3", mode="before"
+        "sound_speed_mps", "density_kg_per_m3", mode="before"
     )
     @classmethod
     def _coerce_ground_truth_arrays(cls, value: Any) -> np.ndarray | None:
@@ -219,7 +215,6 @@ class USCTCase(_ArrayModel):
         expected_shape = self.grid.shape
         arrays = {
             "ground_truth.sound_speed_mps": self.ground_truth.sound_speed_mps,
-            "ground_truth.attenuation_np_per_m": self.ground_truth.attenuation_np_per_m,
             "ground_truth.density_kg_per_m3": self.ground_truth.density_kg_per_m3,
         }
         for name, value in arrays.items():
@@ -239,7 +234,6 @@ class USCTCase(_ArrayModel):
             "measurement.tof_first_arrival_s": self.measurement.tof_first_arrival_s,
             "measurement.tof_xcorr_s": self.measurement.tof_xcorr_s,
             "measurement.phase_slope_delay_s": self.measurement.phase_slope_delay_s,
-            "measurement.log_amp": self.measurement.log_amp,
             "measurement.valid_mask": self.measurement.valid_mask,
             "measurement.feature_quality": self.measurement.feature_quality,
             "measurement.ray_weights": self.measurement.ray_weights,
@@ -302,7 +296,6 @@ class ReconstructionResult(_ArrayModel):
     algorithm: str
     case_id: str
     sound_speed_mps: np.ndarray | None = None
-    attenuation_np_per_m: np.ndarray | None = None
     reflectivity: np.ndarray | None = None
     uncertainty: np.ndarray | None = None
     metrics: dict[str, Any] = Field(default_factory=dict)
@@ -313,7 +306,6 @@ class ReconstructionResult(_ArrayModel):
 
     @field_validator(
         "sound_speed_mps",
-        "attenuation_np_per_m",
         "reflectivity",
         "uncertainty",
         mode="before",

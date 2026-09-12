@@ -118,7 +118,6 @@ def write_case_hdf5(case: USCTCase, path: str | Path) -> Path:
             "tof_first_arrival_s",
             "tof_xcorr_s",
             "phase_slope_delay_s",
-            "log_amp",
             "valid_mask",
             "feature_quality",
             "ray_weights",
@@ -128,9 +127,6 @@ def write_case_hdf5(case: USCTCase, path: str | Path) -> Path:
         ground_truth = handle.create_group("ground_truth")
         _write_dataset(
             ground_truth, "sound_speed_mps", case.ground_truth.sound_speed_mps
-        )
-        _write_dataset(
-            ground_truth, "attenuation_np_per_m", case.ground_truth.attenuation_np_per_m
         )
         _write_dataset(
             ground_truth, "density_kg_per_m3", case.ground_truth.density_kg_per_m3
@@ -180,7 +176,6 @@ def read_case_hdf5(path: str | Path) -> USCTCase:
             tof_first_arrival_s=_read_dataset(measurement_group, "tof_first_arrival_s"),
             tof_xcorr_s=_read_dataset(measurement_group, "tof_xcorr_s"),
             phase_slope_delay_s=_read_dataset(measurement_group, "phase_slope_delay_s"),
-            log_amp=_read_dataset(measurement_group, "log_amp"),
             valid_mask=_read_dataset(measurement_group, "valid_mask"),
             feature_quality=_read_dataset(measurement_group, "feature_quality"),
             ray_weights=_read_dataset(measurement_group, "ray_weights"),
@@ -189,9 +184,6 @@ def read_case_hdf5(path: str | Path) -> USCTCase:
         ground_truth_group = handle["ground_truth"]
         ground_truth = GroundTruthSpec(
             sound_speed_mps=_read_dataset(ground_truth_group, "sound_speed_mps"),
-            attenuation_np_per_m=_read_dataset(
-                ground_truth_group, "attenuation_np_per_m"
-            ),
             density_kg_per_m3=_read_dataset(ground_truth_group, "density_kg_per_m3"),
         )
     return USCTCase(
@@ -223,7 +215,6 @@ def write_result_hdf5(result: ReconstructionResult, path: str | Path) -> Path:
 
         for name in (
             "sound_speed_mps",
-            "attenuation_np_per_m",
             "reflectivity",
             "uncertainty",
         ):
@@ -240,7 +231,6 @@ def read_result_hdf5(path: str | Path) -> ReconstructionResult:
             algorithm=_read_str_attr(handle.attrs, "algorithm"),
             case_id=_read_str_attr(handle.attrs, "case_id"),
             sound_speed_mps=_read_dataset(handle, "sound_speed_mps"),
-            attenuation_np_per_m=_read_dataset(handle, "attenuation_np_per_m"),
             reflectivity=_read_dataset(handle, "reflectivity"),
             uncertainty=_read_dataset(handle, "uncertainty"),
             metrics=_json_loads(handle.attrs.get("metrics_json", "")),

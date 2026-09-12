@@ -293,24 +293,6 @@ def target_delta_tof(
     return target, mask
 
 
-def target_attenuation_integral(
-    case: USCTCase, projector: StraightRayProjector
-) -> tuple[np.ndarray, np.ndarray]:
-    if case.measurement.log_amp is None:
-        raise ValueError("attenuation reconstruction requires measurement.log_amp")
-    log_amp = np.asarray(case.measurement.log_amp, dtype=float)
-    if log_amp.ndim == 3:
-        log_amp = np.nanmean(log_amp, axis=0)
-    target = -log_amp.reshape(-1)
-    if target.size != projector.n_rays:
-        raise ValueError(
-            "measurement.log_amp shape must match transmitter/receiver ray shape"
-        )
-    mask = valid_ray_mask(case, projector) & np.isfinite(target)
-    target = np.where(mask, target, 0.0)
-    return target, mask
-
-
 def residual_metrics(initial_norm: float, final_norm: float) -> dict[str, float]:
     if initial_norm > 0.0:
         relative = final_norm / initial_norm
