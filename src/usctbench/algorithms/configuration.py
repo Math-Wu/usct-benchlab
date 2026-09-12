@@ -127,6 +127,17 @@ def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
         raise ValueError(f"algorithm/config mismatch: {name!r} != {config.name!r}")
     values = expand_config_value(dict(config.parameters))
     model = parameter_model(name, values)
+    # Canonicalize the whole-solve alias before any legacy or typed budget checks.
+    if model is FixedBornParameters and "inner_iterations" in values:
+        legacy = values.pop("inner_iterations")
+        LegacyIterations(iterations=legacy)
+        if "iterations" in values and values["iterations"] != legacy:
+            raise ValueError("conflicting fixed-background iteration budgets")
+        values["iterations"] = legacy
+    if name == "fwi_tiny" and {"stopping", "evaluation"}.intersection(values):
+        raise ValueError(
+            "fwi_tiny does not support stopping or fitting/split evaluation; use steps"
+        )
     auxiliary = {}
     budget_keys = {
         key: values.pop(key)
@@ -197,22 +208,6 @@ def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
     for key in ("initial_sound_speed_mps", "background_sound_speed_mps"):
         if isinstance(values.get(key), np.ndarray):
             values[key] = values[key].tolist()
-    # Fixed Born historically overloaded inner_iterations as the whole solve cap.
-    if model is FixedBornParameters:
-        if "inner_iterations" in values:
-            legacy = values.pop("inner_iterations")
-            LegacyIterations(iterations=legacy)
-            if "iterations" in auxiliary and auxiliary["iterations"] != legacy:
-                raise ValueError("conflicting fixed-background iteration budgets")
-            auxiliary["iterations"] = legacy
-            if (
-                config.run_controls is not None
-                and config.run_controls.max_iterations is not None
-                and config.run_controls.max_iterations != legacy
-            ):
-                raise ValueError(
-                    "conflicting fixed-background and run_controls iteration budgets"
-                )
     typed = model.model_validate(values)
     backend = typed.backend_parameters()
     if model is ExternalFWIParameters and (

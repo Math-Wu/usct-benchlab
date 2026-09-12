@@ -319,7 +319,7 @@ class BornParameters(GaussNewtonParameters):
     max_backtracks: NonnegativeInt = parameter(
         10, "Maximum line-search backtracks.", "trials"
     )
-    green_solver_rtol: Positive = parameter(
+    green_solver_rtol: Annotated[float, Field(strict=True, gt=0, lt=1)] = parameter(
         1e-7, "Volume-integral Green solver tolerance."
     )
     green_solver_maxiter: PositiveInt = parameter(
@@ -334,7 +334,7 @@ class BornParameters(GaussNewtonParameters):
     use_feature_weights: bool = parameter(
         False, "Use feature-derived pressure weights, subject to leakage checks."
     )
-    max_cache_bytes: PositiveInt = parameter(
+    max_cache_bytes: NonnegativeInt = parameter(
         128 * 1024**2, "Green cache capacity.", "bytes", "internal"
     )
 

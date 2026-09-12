@@ -22,6 +22,165 @@ from usctbench.data.synthetic import make_sound_speed_case
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def assert_admission_paths(tmp_path, name, parameters, accepted):
+    """YAML, repeated resolution and direct execution share admission decisions."""
+    config = AlgorithmConfig(name=name, parameters=parameters)
+    path = tmp_path / "admission.yaml"
+    path.write_text(yaml.safe_dump(config.model_dump(mode="json")))
+    register_builtin_algorithms()
+    algorithm = get_algorithm(name)
+    case = make_sound_speed_case(shape=(8, 8), n_transducers=8)
+    if accepted:
+        resolved = validate_algorithm_config(name, config)
+        assert (
+            validate_algorithm_config(name, resolved).model_dump()
+            == resolved.model_dump()
+        )
+        assert load_algorithm_config(path).model_dump() == resolved.model_dump()
+        original = algorithm.run(case, config)
+        repeated = algorithm.run(case, resolved)
+        assert "invalid configuration" not in (original.failure_reason or "")
+        assert original.status == repeated.status
+        assert original.failure_reason == repeated.failure_reason
+        if original.sound_speed_mps is not None:
+            np.testing.assert_array_equal(
+                original.sound_speed_mps, repeated.sound_speed_mps
+            )
+        return resolved
+    with pytest.raises(ValueError):
+        validate_algorithm_config(name, config)
+    with pytest.raises(ValueError):
+        load_algorithm_config(path)
+    result = algorithm.run(case, config)
+    assert result.status == "failed"
+    assert "invalid configuration" in result.failure_reason
+
+
+@pytest.mark.parametrize("stop,accepted", [(2, True), (3, False)])
+def test_fixed_born_budget_alias_before_stopping(tmp_path, stop, accepted):
+    assert_admission_paths(
+        tmp_path,
+        "rwave_adapter",
+        {
+            "mode": "fixed_background",
+            "inner_iterations": 2,
+            "stopping": {"max_iterations": stop},
+        },
+        accepted,
+    )
+
+
+@pytest.mark.parametrize("count,accepted", [(2, True), (3, False)])
+def test_fixed_born_budget_alias_against_run_controls(count, accepted):
+    config = AlgorithmConfig(
+        parameters={"mode": "fixed_background", "inner_iterations": 2},
+        run_controls={"max_iterations": count},
+    )
+    if accepted:
+        resolved = validate_algorithm_config("rwave_adapter", config)
+        assert validate_algorithm_config("rwave_adapter", resolved) == resolved
+    else:
+        with pytest.raises(ValueError, match="conflicting"):
+            validate_algorithm_config("rwave_adapter", config)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("stopping", {}),
+        ("stopping", {"max_iterations": 2}),
+        ("evaluation", {}),
+        ("evaluation", {"receiver_fraction": 0.2}),
+    ],
+)
+def test_tiny_rejects_unsupported_legacy_controls(tmp_path, key, value):
+    assert_admission_paths(tmp_path, "fwi_tiny", {"steps": 2, key: value}, False)
+
+
+def test_tiny_steps_behavior_unchanged(tmp_path):
+    from usctbench.algorithms.fwi.tiny import TinyFWIAlgorithm
+
+    resolved = assert_admission_paths(tmp_path, "fwi_tiny", {"steps": 2}, True)
+    case = make_sound_speed_case(shape=(8, 8), n_transducers=8)
+    algorithm = TinyFWIAlgorithm()
+    before = algorithm.run.__wrapped__(
+        algorithm, case, AlgorithmConfig(parameters={"steps": 2})
+    )
+    after = algorithm.run(case, resolved)
+    assert after.status == before.status == "success"
+    np.testing.assert_array_equal(after.sound_speed_mps, before.sound_speed_mps)
+
+
+@pytest.mark.parametrize("mode", ["fixed_background", "nonlinear"])
+@pytest.mark.parametrize(
+    "field,value,accepted",
+    [
+        ("max_cache_bytes", 0, True),
+        ("max_cache_bytes", -1, False),
+        ("green_solver_rtol", 0.5, True),
+        ("green_solver_rtol", 0.0, False),
+        ("green_solver_rtol", 1.0, False),
+        ("green_solver_rtol", 2.0, False),
+    ],
+)
+def test_born_operator_parameter_limits(tmp_path, mode, field, value, accepted):
+    # Nonlinear is the existing default, not a new mode spelling.
+    parameters = {field: value, "iterations": 1}
+    if mode == "fixed_background":
+        parameters["mode"] = mode
+    assert_admission_paths(tmp_path, "rwave_adapter", parameters, accepted)
+
+
+@pytest.mark.parametrize(
+    "old,new,value,canonical",
+    [
+        ("c_init", "initial_sound_speed_mps", 1490.0, 1490.0),
+        ("velocity_bounds", "sound_speed_bounds_mps", [1400, 1600], (1400, 1600)),
+        ("sos_freqs_mhz", "sos_frequencies_hz", 0.3, [300000.0]),
+        ("sos_atten_freqs_mhz", "attenuation_frequencies_hz", 0.45, [450000.0]),
+    ],
+)
+def test_external_alias_null_scalar_and_roundtrip(tmp_path, old, new, value, canonical):
+    for parameters in (
+        {old: None},
+        {old: None, new: canonical},
+        {old: value, new: None},
+        {old: value, new: canonical},
+    ):
+        resolved = assert_admission_paths(
+            tmp_path, "fwi_kwave_adapter", parameters, True
+        )
+        typed = ExternalFWIParameters.model_validate(resolved.parameters)
+        expected = None if parameters == {old: None} else canonical
+        assert getattr(typed, new) == expected
+    bad = 1480.0 if old == "c_init" else [1300.0, 1700.0]
+    assert_admission_paths(tmp_path, "fwi_kwave_adapter", {old: value, new: bad}, False)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("sos_iters", 3), ("atten_iters", 2), ("cuda_devices", 0)]
+)
+def test_external_legacy_scalar_sequences(tmp_path, field, value):
+    resolved = assert_admission_paths(
+        tmp_path, "fwi_kwave_adapter", {field: value}, True
+    )
+    assert resolved.parameters[field] == [value]
+    assert_admission_paths(tmp_path, "fwi_kwave_adapter", {field: "bad"}, False)
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"c_init": True},
+        {"sos_freqs_mhz": "0.3"},
+        {"velocity_bounds": 1500},
+        {"baseline_sound_speed_mps": 0},
+    ],
+)
+def test_external_invalid_legacy_values(tmp_path, parameters):
+    assert_admission_paths(tmp_path, "fwi_kwave_adapter", parameters, False)
+
+
 @pytest.mark.parametrize(
     "name",
     [

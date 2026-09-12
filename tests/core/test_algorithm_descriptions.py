@@ -102,6 +102,29 @@ def test_agent_types_enums_cross_checks_and_budget_boundary():
     assert result.metrics["stopping"]["policy"]["update_rtol"] is None
 
 
+def test_external_fwi_agent_admission_stays_canonical_and_strict():
+    for values in (
+        {"c_init": None},
+        {"sos_freqs_mhz": 0.3},
+        {"sos_frequencies_hz": [300000.0]},
+        {"baseline_sound_speed_mps": 1490.0},
+        {"initial_sound_speed_mps": "1490"},
+        {"sound_speed_bounds_mps": 1500.0},
+    ):
+        with pytest.raises(ValueError):
+            make_agent_config("fwi_kwave_adapter", values, variant="external_pipeline")
+    config = make_agent_config(
+        "fwi_kwave_adapter",
+        {
+            "initial_sound_speed_mps": 1490.0,
+            "sound_speed_bounds_mps": [1400.0, 1600.0],
+        },
+        variant="external_pipeline",
+    )
+    assert config.parameters["c_init"] == 1490.0
+    assert "baseline_sound_speed_mps" not in config.parameters
+
+
 def test_definitions_do_not_leak_and_nested_objects_fail_closed():
     hidden = create_model(
         "HiddenNested",

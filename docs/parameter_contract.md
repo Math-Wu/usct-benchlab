@@ -55,6 +55,23 @@ Equivalent aliases are accepted; conflicting aliases/budgets fail. The FWI
 external command builder receives its legacy flag spelling only at the runtime
 boundary. Typed objects use canonical names and Hz schedules.
 
+Fixed Born normalizes `inner_iterations` before checking `iterations`, legacy
+`stopping.max_iterations` and `run_controls.max_iterations`; repeated validation
+has the same admission decision. Tiny rejects legacy `stopping` and fitting/split
+`evaluation`, including empty dictionaries: neither is implemented by that solver.
+Its `steps` loop and post-hoc image evaluation remain unchanged.
+
+Both Born models allow `max_cache_bytes=0` (no Green cache) and require
+`0 < green_solver_rtol < 1`, matching the numerical operator.
+
+External FWI null aliases mean unspecified; a non-null canonical or alias value
+takes precedence over null, while conflicting non-null values fail. Legacy CLI
+frequency and iteration schedules and device ids accept scalars as singleton
+sequences. Bounds still require two ordered values. Agent canonical admission
+remains strict and does not inherit these expert compatibility conversions.
+An omitted/null `baseline_sound_speed_mps` uses the case's
+`reference_sound_speed_mps`, falling back to 1500 m/s only if absent.
+
 New callers put budgets in `run_controls` / `budget_caps`. The loader now
 preserves these top-level fields (previously it discarded them). Existing YAML
 iteration and stopping dictionaries remain supported without changing their

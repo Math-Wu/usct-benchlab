@@ -6,7 +6,7 @@ remain owned by the installed external pipeline; no local defaults are invented.
 
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import TypeAdapter, model_validator
 
 from usctbench.algorithms.parameters import (
     Bounds,
@@ -112,8 +112,11 @@ class ExternalFWIParameters(Parameters):
         "Allow explicitly labeled oracle artifact selection.",
         exposure="internal",
     )
-    baseline_sound_speed_mps: Positive = parameter(
-        1500.0, "Post-hoc image baseline.", "m/s", "internal"
+    baseline_sound_speed_mps: Positive | None = parameter(
+        None,
+        "Post-hoc baseline; null uses case reference speed, then 1500 m/s.",
+        "m/s",
+        "internal",
     )
     initial_sound_speed_mps: Positive | None = delegated(
         "Initial sound speed (legacy c_init)", "m/s", "agent"
@@ -250,6 +253,23 @@ class ExternalFWIParameters(Parameters):
         if not isinstance(data, dict):
             return data
         values = dict(data)
+        # The expert CLI historically accepts a scalar for sequence arguments.
+        # Canonical Agent admission validates its own strict schema first.
+        for key in (
+            "cuda_devices",
+            "sos_freqs_mhz",
+            "sos_atten_freqs_mhz",
+            "sos_iters",
+            "atten_iters",
+            "crange",
+            "attenrange",
+            "velocity_bounds",
+        ):
+            if key in values and values[key] is not None:
+                value = values[key]
+                values[key] = (
+                    list(value) if isinstance(value, (list, tuple)) else [value]
+                )
         for old, new, scale in (
             ("c_init", "initial_sound_speed_mps", 1),
             ("velocity_bounds", "sound_speed_bounds_mps", 1),
@@ -258,12 +278,22 @@ class ExternalFWIParameters(Parameters):
         ):
             if old in values:
                 value = values.pop(old)
+                if value is None:
+                    continue
+                annotation = (
+                    list[Positive]
+                    if scale == 1e6
+                    else Bounds if old == "velocity_bounds" else Positive
+                )
+                value = TypeAdapter(annotation).validate_python(value)
                 value = (
                     [v * scale for v in value]
                     if isinstance(value, (list, tuple))
                     else value * scale
                 )
-                if new in values and listify(values[new]) != listify(value):
+                if values.get(new) is not None and listify(values[new]) != listify(
+                    value
+                ):
                     raise ValueError(f"conflicting aliases: {old} and {new}")
                 values[new] = value
         if "execution_mode" in values:
@@ -291,15 +321,15 @@ class ExternalFWIParameters(Parameters):
         for canonical, old, scale in (
             ("initial_sound_speed_mps", "c_init", 1),
             ("sound_speed_bounds_mps", "velocity_bounds", 1),
-            ("sos_frequencies_hz", "sos_freqs_mhz", 1e-6),
-            ("attenuation_frequencies_hz", "sos_atten_freqs_mhz", 1e-6),
+            ("sos_frequencies_hz", "sos_freqs_mhz", 1e6),
+            ("attenuation_frequencies_hz", "sos_atten_freqs_mhz", 1e6),
         ):
             if canonical in values:
                 value = values.pop(canonical)
                 values[old] = (
-                    [v * scale for v in value]
+                    [v / scale for v in value]
                     if isinstance(value, (list, tuple))
-                    else value * scale
+                    else value / scale
                 )
         return values
 

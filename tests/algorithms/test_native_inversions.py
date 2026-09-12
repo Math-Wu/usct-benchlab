@@ -37,6 +37,34 @@ def small_case(physics):
     return case
 
 
+@pytest.mark.parametrize("mode", ["fixed_background", "nonlinear"])
+def test_born_zero_cache_preserves_reconstruction(mode):
+    from usctbench.algorithms.configuration import validate_algorithm_config
+
+    case = small_case("born")
+    parameters = {
+        "mode": mode,
+        "green_backend": "volume_integral",
+        "green_solver_rtol": 1e-7,
+        "iterations": 2,
+    }
+    if mode == "fixed_background":
+        parameters.pop("iterations")
+        parameters.update(inner_iterations=2, stopping={"max_iterations": 2})
+    config = AlgorithmConfig(parameters=parameters)
+    cached = RWaveAdapter().run(case, config)
+    uncached_config = AlgorithmConfig(parameters={**parameters, "max_cache_bytes": 0})
+    uncached = RWaveAdapter().run(case, uncached_config)
+    repeated = RWaveAdapter().run(
+        case, validate_algorithm_config("rwave_adapter", uncached_config)
+    )
+    assert cached.status == uncached.status == repeated.status == "success"
+    np.testing.assert_allclose(
+        uncached.sound_speed_mps, cached.sound_speed_mps, rtol=1e-12
+    )
+    np.testing.assert_array_equal(uncached.sound_speed_mps, repeated.sound_speed_mps)
+
+
 @pytest.mark.parametrize(
     "physics,algorithm", [("bent", BentRayGNAdapter), ("born", RWaveAdapter)]
 )
