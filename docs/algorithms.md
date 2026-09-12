@@ -13,7 +13,6 @@ straight-ray substitutes. Historical README example images predate this change.
 | Born / `rwave_adapter` | Complex pressure, current-background Green fields and Born updates | Sound speed | Full Green volume integral by config; optional Eikonal/WKB; not an upstream r-Wave port | `configs/algorithms/rwave.yaml` |
 | FWI / `fwi_kwave_adapter` | External k-Wave/WaveformInversionUST driver or result | Sound speed | Production MATLAB path is retained; imported artifacts cannot provide online stopping | `configs/algorithms/fwi_kwave.yaml` |
 | Controlled FWI / `fwi_kwave_adapter` with `controlled_operator: true` | External Helmholtz matrices and complex pressure | Sound speed | Optional CPU reference Gauss-Newton loop, not the production GPU optimization trajectory | `configs/algorithms/fwi_controlled.yaml` |
-| Attenuation / `attenuation_sirt` | Straight-ray log-amplitude ratios | Attenuation | Requires calibrated units; ignores diffraction and refraction | `configs/algorithms/attenuation.yaml` |
 | Tiny FWI / `fwi_tiny` | Small synthetic sanity model | Sound speed | Test helper, not production FWI | `configs/algorithms/fwi_tiny.yaml` |
 
 The pre-existing `diffusion_fwi_kwave_adapter` artifact adapter is unchanged and

@@ -178,37 +178,3 @@ def test_huber_preconditioning_uses_only_training_data_and_global_budget():
     costs = [row["objective"] for row in first.metrics["iteration_history"]]
     assert np.all(np.diff(costs) <= 1e-25)
     assert first.metrics["objective_name"] == "weighted_huber"
-
-
-def test_attenuation_holdout_budget_and_returned_residual():
-    from usctbench.algorithms.attenuation import AttenuationSIRTAlgorithm
-    from usctbench.data.synthetic import make_attenuation_case
-
-    case = make_attenuation_case(shape=(8, 8), n_transducers=8)
-    cfg = config(evaluation={"receiver_indices": [1]}, attenuation_upper_np_per_m=0.1)
-    first = AttenuationSIRTAlgorithm().run(case, cfg)
-    altered = case.measurement.log_amp.copy()
-    altered[:, 1] += 100
-    changed = case.model_copy(
-        update={"measurement": case.measurement.model_copy(update={"log_amp": altered})}
-    )
-    second = AttenuationSIRTAlgorithm().run(changed, cfg)
-    assert first.failure_reason is None, first.failure_reason
-    np.testing.assert_array_equal(
-        first.attenuation_np_per_m, second.attenuation_np_per_m
-    )
-    assert np.max(first.attenuation_np_per_m) <= 0.1
-    assert first.metrics["stop_reason"] != "not_terminated"
-    op = ForwardProjector.from_case(case)
-    prediction = op.forward(first.attenuation_np_per_m).reshape(op.ray_shape)
-    split = make_data_split(
-        -case.measurement.log_amp,
-        valid_mask=case.measurement.valid_mask,
-        receiver_indices=[1],
-        tx_positions=case.geometry.tx_pos_m,
-        rx_positions=case.geometry.rx_pos_m,
-    )
-    expected = split.evaluate(prediction, -case.measurement.log_amp)["train"][
-        "weighted_residual_norm"
-    ]
-    np.testing.assert_allclose(first.metrics["data_residual_norm"], expected)

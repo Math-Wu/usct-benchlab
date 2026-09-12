@@ -16,20 +16,10 @@ $$
 Here $p_s(t,x)$ is pressure, $q_s(t,x)$ is the emitted source term, and $c(x)$
 is sound speed.
 
-A more general model may include density and attenuation:
-
-$$
-\begin{aligned}
-\frac{1}{c(x)^2}\partial_{tt}p_s
-- \nabla\cdot\left(\frac{1}{\rho(x)}\nabla p_s\right)
-+ \mathcal A_\alpha[p_s]
-&= q_s.
-\end{aligned}
-$$
-
-The density field is $\rho(x)$, and $\mathcal A_\alpha$ denotes an attenuation
-operator controlled by $\alpha(x)$. Practical solvers also include boundary
-conditions, transducer models, grids, and source wavelets.
+The active model reconstructs sound speed in two spatial dimensions, with fixed
+material assumptions. Practical solvers also include boundary conditions,
+transducer models, grids, and source wavelets. Absorbing boundary layers are
+numerical boundary conditions, not reconstructed tissue absorption.
 
 ## Receiver Operator
 
@@ -41,23 +31,22 @@ d_{sr}(t)=\mathcal M_r p_s(t,\cdot)+\eta_{sr}(t).
 $$
 
 The data $d_{sr}(t)$ may be stored as raw time traces, frequency-domain complex
-pressure, or derived features such as travel-time delay and log-amplitude
-ratio.
+pressure, or derived sound-speed features such as travel-time delay.
 
 ## Inverse Problem
 
-The full USCT inverse problem is
+The sound-speed inverse problem considered here is
 
 $$
-\text{recover } c(x),\rho(x),\alpha(x)
+\text{recover } c(x)
 \quad
 \text{from}
 \quad
 \{d_{sr}(t)\}_{s,r}.
 $$
 
-The package focuses primarily on reconstructing the sound-speed map
-$c(x)$. Attenuation is supported as a separate straight-ray baseline.
+The package reconstructs $c(x)$; other material properties are not optimization
+targets in this contract.
 
 ## Straight-Ray Approximation
 
@@ -129,19 +118,6 @@ Registered sound-speed solvers:
 - `straight_cgls` is a Krylov least-squares solver.
 - `straight_sirt` is a simultaneous iterative reconstruction method.
 - `straight_sart` is an ordered/subset algebraic reconstruction method.
-
-## Attenuation Tomography
-
-For amplitude-based attenuation tomography, the basic line-integral model is
-
-$$
--\log |p/p_0|
-\approx
-\int_\gamma \alpha(x)\,d\ell .
-$$
-
-The registered `attenuation_sirt` command solves this straight-ray attenuation
-problem with an algebraic update.
 
 ## Eikonal / Bent-Ray Model
 
@@ -231,7 +207,6 @@ result using the package-standard benchmark outputs.
 | Straight-ray weighted least squares | `straight_cgls` | `delta_tof_s` | Sound speed |
 | Simultaneous iterative ray tomography | `straight_sirt` | `delta_tof_s` | Sound speed |
 | Ordered/subset algebraic ray update | `straight_sart` | `delta_tof_s` | Sound speed |
-| Straight-ray log-amplitude tomography | `attenuation_sirt` | `log_amp` | Attenuation |
 | Nonlinear Eikonal travel-time tomography | `bent_ray_gn` | `delta_tof_s` or `tof_s` | Sound speed |
 | Relinearized finite-frequency Ray-Born | `rwave_adapter` | `freq_data`, calibrated source/reference | Sound speed |
 | PDE-level full-wave inversion adapter | `fwi_kwave_adapter` | External FWI artifact or command | Sound speed |

@@ -44,7 +44,7 @@ physical constant. Penalty amplitudes have objective/operator-dependent units.
 | `ray_weight_min`, `ray_weight_threshold` | `min_ray_weight` |
 | `roi_aware_laplacian` | `roi_laplacian` |
 | FWI `c_init`, `velocity_bounds` | `initial_sound_speed_mps`, `sound_speed_bounds_mps` |
-| FWI `sos_freqs_mhz`, `sos_atten_freqs_mhz` | `sos_frequencies_hz`, `attenuation_frequencies_hz`; explicit MHz-to-Hz conversion |
+| FWI `sos_freqs_mhz` | `sos_frequencies_hz`; explicit MHz-to-Hz conversion |
 | `iterations`, `outer_iterations`, Tiny `steps` | Checked legacy run budgets, not typed algorithm hyperparameters |
 | Fixed Born `inner_iterations` | Checked total iteration budget, not a nonlinear inner solve |
 | `parameters.stopping` | Checked legacy policy; remains opt-in compatibility, not the Agent interface |
@@ -100,6 +100,12 @@ and shared external deadlines are later work, not implemented by parameter schem
 
 Calibration arrays are validated runtime inputs, never Agent hyperparameters.
 Initial/background image arrays remain expert-only; default Agent interfaces
-must not accept arbitrary artifact paths. Legacy attenuation bounds retain
-unknown frequency provenance; this change does not migrate attenuation units or
-declare a reference frequency.
+must not accept arbitrary artifact paths. Attenuation reconstruction and its typed fields have been removed.
+
+## Intentional breaking change
+
+Round 3 removes `attenuation_sirt`, canonical `log_amp` measurements, attenuation
+GT/results, and their HDF5 read/write paths. No compatibility or migration is
+provided for attenuation-bearing BenchLab files. Sound-speed-only cases/results
+remain supported. Raw dataset maps outside this scope are ignored; no frequency
+or unit conversion is inferred. Removed joint-FWI schedules now fail validation.

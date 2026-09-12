@@ -2,10 +2,9 @@
 
 [English README](README.md)
 
-`usct-benchlab` 是一个轻量级 Python 基准测试包，用于超声计算机断层成像
-（ultrasound computed tomography, USCT）重建算法的统一评估。它提供统一的
-输入/输出格式、数据集转换工具、经典重建算法、FWI 结果适配器、常用指标、
-预览图和 benchmark 汇总，方便对不同算法进行可复现的横向比较。
+`usct-benchlab` 专注于 **二维超声声速重建** 的研究级数值基准测试与运行时集成。
+它提供统一输入/输出、数据准备、经典与原生物理模型算法、FWI 适配器、指标和
+可复现的评估报告。当前不提供衰减重建 API，也不声明临床有效性。
 
 ## USCT 是什么？
 
@@ -13,9 +12,8 @@
 在人体组织或仿体中按照声学波动方程传播，接收阵列记录时间信号；反问题的
 目标是从这些接收信号中恢复介质的空间声学参数。
 
-本仓库目前主要关注声速图 $c(x)$ 的重建。相关的物理参数还包括密度
-$\rho(x)$ 和衰减 $\alpha(x)$。所有数据都会被转换成统一的 `USCTCase`
-格式，所有算法输出都会保存为统一的 `ReconstructionResult`。
+本仓库的重建目标是声速图 $c(x)$。数据使用统一的 `USCTCase` 格式，
+算法输出使用 `ReconstructionResult`。
 
 ## 数学形式
 
@@ -141,7 +139,6 @@ k-Wave/FWI 结果的适配器。更详细的数学说明见
 | CGLS | `straight_cgls` | 直射线加权最小二乘 | 带环形几何和 travel-time 测量的 `USCTCase` | 快速声速 baseline | `configs/algorithms/cgls.yaml` |
 | SIRT | `straight_sirt` | 同步迭代射线层析 | 带环形几何和 travel-time 测量的 `USCTCase` | 稳健的迭代声速 baseline | `configs/algorithms/sirt.yaml` |
 | SART | `straight_sart` | 有序/子集代数射线更新 | 带环形几何和 travel-time 测量的 `USCTCase` | 有序更新直射线 baseline | `configs/algorithms/sart.yaml` |
-| Attenuation SIRT | `attenuation_sirt` | 直射线 log-amplitude 层析 | 带 log-amplitude 测量的 `USCTCase` | 衰减成像 baseline | `configs/algorithms/attenuation.yaml` |
 | Bent-ray | `bent_ray_gn` | Eikonal / fast marching 非线性到时反演 | 首波到时或经过校准的到时差 | 折射校正 | `configs/algorithms/bent_ray.yaml` |
 | rWave adapter | `rwave_adapter` | 更新背景的有限频率 Ray-Born 散射 | 复压力以及源校准或独立水参考 | 散射敏感反演 | `configs/algorithms/rwave.yaml` |
 | FWI adapter | `fwi_kwave_adapter` | PDE 层面的 full-wave inversion adapter | `USCTCase` 加外部 k-Wave/FWI 结果或命令路径 | 高保真 FWI 结果汇报 | `configs/algorithms/fwi_kwave.yaml` |

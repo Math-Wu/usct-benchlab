@@ -192,9 +192,7 @@ class GroundTruthSpec(_ArrayModel):
     sound_speed_mps: np.ndarray | None = None
     density_kg_per_m3: np.ndarray | None = None
 
-    @field_validator(
-        "sound_speed_mps", "density_kg_per_m3", mode="before"
-    )
+    @field_validator("sound_speed_mps", "density_kg_per_m3", mode="before")
     @classmethod
     def _coerce_ground_truth_arrays(cls, value: Any) -> np.ndarray | None:
         return _optional_array(value)

@@ -104,3 +104,10 @@ object-valued Agent parameters currently fail schema generation until an explici
 nested exposure policy is defined; the library never silently exports an arbitrary
 runtime object. Consumers should version-check schemas and reject unsupported
 versions rather than reconstructing a second parameter table.
+
+## Reconstruction scope
+
+The canonical reconstruction target is 2-D sound speed. Attenuation is not an
+estimated quantity or Agent capability. External FWI descriptions distinguish
+artifact import from execution; an imported image does not certify zero-absorption
+physics in its originating runtime. Compute budgets and trust boundaries are unchanged.

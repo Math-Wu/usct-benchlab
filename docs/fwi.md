@@ -56,12 +56,9 @@ speed image. Optional fields enable richer reports:
 | Field | Meaning |
 | --- | --- |
 | `C_INTERP` | Ground-truth sound speed used for FWI-native metrics. |
-| `ATTEN_ESTIM` | Final attenuation estimate. |
 | `VEL_ESTIM_ITER` | Sound-speed images over iterations. |
-| `ATTEN_ESTIM_ITER` | Attenuation images over iterations. |
 | `LOSS_ITER` | Per-iteration loss curve and iteration count. |
 | `VEL_INIT` | Initial sound-speed model. |
-| `ATTEN_INIT_USED` | Initial attenuation model. |
 | `psnr_value`, `ssim_value` | Native external metrics, if saved. |
 | `datasetPath` | External dataset path recorded by the FWI pipeline. |
 
@@ -138,3 +135,16 @@ RMSE, SSIM, PSNR, and baseline-improvement values.
 do not vendor a production k-Wave, MATLAB, or diffusion model implementation
 into this package. External solver setup remains the responsibility of the user
 environment.
+
+## Sound-speed-only scope
+
+Only sound-speed estimates, initialization, iteration/loss history and permitted
+GT diagnostics are imported. Unknown material-result arrays in legacy MAT files
+are ignored, not reinterpreted or serialized.
+
+The legacy command builder fixes simulation absorption coefficients to zero and
+disables joint material-update stages. `a0` is Helmholtz PML strength, not a
+material initialization. Existing datasets and warm-start artifacts may carry
+other fixed physics; importing a result does not certify those assumptions.
+Runtime inspection/enforcement and integration with `lucian-dw/WaveformInversionUST`
+are deferred to Round 4. No runtime fork is introduced here.

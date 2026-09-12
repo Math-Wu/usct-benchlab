@@ -306,7 +306,7 @@ def operator_stage():
             if "result" not in {arg.arg for arg in node.args.args + node.args.kwonlyargs}:
                 raise RuntimeError("unexpected data-domain evaluation signature")
             guard = ast.parse('''
-if not (str(result.algorithm).startswith("straight_ray") or result.algorithm in {"cgls", "sirt", "sart", "attenuation"}):
+if not (str(result.algorithm).startswith("straight_ray") or result.algorithm in {"cgls", "sirt", "sart"}):
     result.artifacts.setdefault("data_domain_metric_policy", "native operator metrics only; straight-ray fallback disabled")
     return
 ''').body
@@ -387,7 +387,7 @@ def test_default_conversion_preserves_pressure_without_oracle_features(tmp_path)
     np.testing.assert_allclose(case.geometry.tx_pos_m, positions[selected, ::-1])
     assert case.measurement.tof_s is None
     assert case.measurement.delta_tof_s is None
-    assert case.measurement.log_amp is None
+    assert "log_amp" not in case.measurement.model_fields
     assert case.metadata["ground_truth_used_for_preprocessing"] is False
     with h5py.File(path, "r+") as f:
         f["C"][...] = 1720.0

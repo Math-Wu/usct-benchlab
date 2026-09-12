@@ -288,7 +288,7 @@ SPECS = {
     "fwi_kwave_adapter": AlgorithmSpecification(
         "fwi_kwave_adapter",
         "full_wave",
-        "External FWI result/pipeline boundary and controlled discrete reference.",
+        "2-D sound-speed FWI result/pipeline boundary and controlled discrete reference; attenuation is not estimated.",
         (
             Variant(
                 "import_result",
