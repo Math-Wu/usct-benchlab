@@ -218,6 +218,11 @@ def test_nonlinear_budget_returns_a_complete_checkpoint(budget):
 )
 def test_invalid_initialization_settings_fail_explicitly(settings):
     case, _, _ = nonlinear_case()
-    result = RWaveAdapter().run(case, config(**settings))
+    candidate = config(**settings)
+    if settings.get("mode") == "fixed_background":
+        # Keep this an initialization rejection test, not an unrelated budget
+        # rejection now that variant-specific unused fields fail closed.
+        candidate = AlgorithmConfig(parameters=settings)
+    result = RWaveAdapter().run(case, candidate)
     assert result.status == "failed"
     assert "initialization" in result.failure_reason

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import numpy as np
 
 from usctbench.metrics import (
@@ -25,6 +27,7 @@ class TinyFWIAlgorithm:
 
     name = "fwi_tiny"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         if case.ground_truth.sound_speed_mps is None:
             return ReconstructionResult(

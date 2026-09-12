@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import numpy as np
 
 from usctbench.algorithms._control import InversionControl, add_image_metrics
@@ -30,6 +32,7 @@ class RWaveAdapter:
 
     name = "rwave_adapter"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         return run_with_failure_capture(
             self.name, case, lambda: self._run(case, config)
@@ -480,9 +483,12 @@ class RWaveAdapter:
 
 
 def register_rwave_algorithm(*, replace: bool = False) -> None:
+    from usctbench.core.algorithm_specs import SPECS
+
     register_algorithm(
         "rwave_adapter",
         RWaveAdapter,
+        specification=SPECS["rwave_adapter"],
         description="Native relinearized Ray-Born complex-pressure inversion.",
         tags=("ray-born", "frequency", "scattering"),
         replace=replace,

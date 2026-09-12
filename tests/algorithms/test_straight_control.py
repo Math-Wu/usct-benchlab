@@ -28,11 +28,11 @@ def small_case():
     return make_sound_speed_case(shape=(8, 8), n_transducers=8, inclusion_mps=1470)
 
 
-def config(**parameters):
+def config(algorithm=None, **parameters):
     return AlgorithmConfig(
         parameters={
             "iterations": 4,
-            "subsets": 3,
+            **({"subsets": 3} if algorithm is StraightRaySARTAlgorithm else {}),
             "stopping": {
                 "update_rtol": None,
                 "objective_rtol": None,
@@ -58,7 +58,9 @@ def test_operator_extraction_preserves_alias_and_discrete_adjoint():
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_training_holdout_isolation_without_truth(algorithm):
     case = small_case().model_copy(update={"ground_truth": GroundTruthSpec()})
-    cfg = config(evaluation={"receiver_indices": [1], "exclude_reciprocal": True})
+    cfg = config(
+        algorithm, evaluation={"receiver_indices": [1], "exclude_reciprocal": True}
+    )
     first = algorithm().run(case, cfg)
     altered = case.measurement.delta_tof_s.copy()
     altered[:, 1] = altered[:, 1] * -8 + 4e-6
@@ -103,7 +105,9 @@ def test_training_holdout_isolation_without_truth(algorithm):
 )
 def test_budgets_return_consistent_complete_checkpoints(algorithm, budget, limit):
     case = small_case()
-    cfg = config(stopping={budget: limit, "update_rtol": None, "objective_rtol": None})
+    cfg = config(
+        algorithm, stopping={budget: limit, "update_rtol": None, "objective_rtol": None}
+    )
     result = algorithm().run(case, cfg)
     assert result.failure_reason is None, result.failure_reason
     stop = result.metrics["stopping"]
@@ -128,7 +132,7 @@ def test_budgets_return_consistent_complete_checkpoints(algorithm, budget, limit
 @pytest.mark.parametrize("algorithm", ALGORITHMS)
 def test_bound_projected_metrics_correspond_to_returned_image(algorithm):
     case = small_case()
-    cfg = config(sound_speed_bounds_mps=[1499, 1501])
+    cfg = config(algorithm, sound_speed_bounds_mps=[1499, 1501])
     result = algorithm().run(case, cfg)
     assert result.failure_reason is None, result.failure_reason
     assert np.min(result.sound_speed_mps) >= 1499 - 1e-10

@@ -25,21 +25,19 @@ def test_projector_adjoint_identity(synthetic_case):
 
 
 def test_ray_sound_speed_algorithms_run(synthetic_case):
-    config = AlgorithmConfig(
-        parameters={
-            "iterations": 1,
-            "subsets": 4,
-            "inner_iterations": 4,
-            "outer_iterations": 1,
-        }
-    )
-
     for algorithm in (
         StraightRayCGLSAlgorithm(),
         StraightRaySIRTAlgorithm(),
         StraightRaySARTAlgorithm(),
         BentRayGNAdapter(),
     ):
+        config = AlgorithmConfig(
+            parameters={
+                "iterations": 1,
+                **({"subsets": 4} if algorithm.name == "straight_sart" else {}),
+                **({"inner_iterations": 4} if algorithm.name == "bent_ray_gn" else {}),
+            }
+        )
         result = algorithm.run(synthetic_case, config)
         assert result.status == ResultStatus.SUCCESS
         assert result.sound_speed_mps is not None
@@ -60,24 +58,34 @@ def test_native_bent_ray_and_rwave_feature_rejection(synthetic_case):
 
 
 def test_string_false_bool_parameters_do_not_enable_ray_options(synthetic_case):
-    config = AlgorithmConfig(
-        parameters={
-            "iterations": 2,
-            "subsets": 4,
-            "outer_iterations": 1,
-            "inner_iterations": 2,
-            "roi_update_only": "false",
-            "roi_laplacian": "false",
-            "line_search": "false",
-            "coverage_preconditioning": "false",
-            "coverage_preconditioner_normalize": "false",
-        }
+    common = {"iterations": 2, "roi_update_only": "false"}
+    cgls = StraightRayCGLSAlgorithm().run(
+        synthetic_case,
+        AlgorithmConfig(
+            parameters={
+                **common,
+                "roi_laplacian": "false",
+                "coverage_preconditioning": "false",
+                "coverage_preconditioner_normalize": "false",
+            }
+        ),
     )
-
-    cgls = StraightRayCGLSAlgorithm().run(synthetic_case, config)
-    sirt = StraightRaySIRTAlgorithm().run(synthetic_case, config)
-    sart = StraightRaySARTAlgorithm().run(synthetic_case, config)
-    bent = BentRayGNAdapter().run(synthetic_case, config)
+    sirt = StraightRaySIRTAlgorithm().run(
+        synthetic_case, AlgorithmConfig(parameters=common)
+    )
+    sart = StraightRaySARTAlgorithm().run(
+        synthetic_case, AlgorithmConfig(parameters={**common, "subsets": 4})
+    )
+    bent = BentRayGNAdapter().run(
+        synthetic_case,
+        AlgorithmConfig(
+            parameters={
+                **common,
+                "inner_iterations": 2,
+                "line_search": "false",
+            }
+        ),
+    )
 
     assert cgls.metrics["roi_update_only"] is False
     assert cgls.metrics["roi_laplacian"] is False

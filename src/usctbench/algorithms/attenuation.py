@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import numpy as np
 
 from usctbench.algorithms.ray import (
@@ -21,6 +23,7 @@ class AttenuationSIRTAlgorithm:
 
     name = "attenuation_sirt"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         def _run() -> ReconstructionResult:
             projector = StraightRayProjector.from_case(case)
@@ -104,9 +107,12 @@ def _is_surrogate_attenuation_case(case: USCTCase) -> bool:
 
 
 def register_attenuation_algorithm(*, replace: bool = False) -> None:
+    from usctbench.core.algorithm_specs import SPECS
+
     register_algorithm(
         "attenuation_sirt",
         AttenuationSIRTAlgorithm,
+        specification=SPECS["attenuation_sirt"],
         description="Straight-ray SIRT attenuation reconstruction.",
         tags=("ray", "attenuation"),
         replace=replace,

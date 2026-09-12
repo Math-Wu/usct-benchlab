@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import time
 from typing import Any
 
@@ -403,6 +405,7 @@ def run_with_failure_capture(
 class StraightRayCGLSAlgorithm:
     name = "straight_cgls"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         from usctbench.algorithms.straight import reconstruct
 
@@ -414,6 +417,7 @@ class StraightRayCGLSAlgorithm:
 class StraightRaySIRTAlgorithm:
     name = "straight_sirt"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         from usctbench.algorithms.straight import reconstruct
 
@@ -425,6 +429,7 @@ class StraightRaySIRTAlgorithm:
 class StraightRaySARTAlgorithm:
     name = "straight_sart"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         from usctbench.algorithms.straight import reconstruct
 
@@ -435,10 +440,12 @@ class StraightRaySARTAlgorithm:
 
 def register_ray_algorithms(*, replace: bool = False) -> None:
     """Register built-in straight-ray sound-speed algorithms."""
+    from usctbench.core.algorithm_specs import SPECS
 
     register_algorithm(
         "straight_sart",
         StraightRaySARTAlgorithm,
+        specification=SPECS["straight_sart"],
         description="Straight-ray SART sound-speed reconstruction.",
         tags=("ray", "sound-speed"),
         replace=replace,
@@ -446,6 +453,7 @@ def register_ray_algorithms(*, replace: bool = False) -> None:
     register_algorithm(
         "straight_sirt",
         StraightRaySIRTAlgorithm,
+        specification=SPECS["straight_sirt"],
         description="Straight-ray SIRT sound-speed reconstruction.",
         tags=("ray", "sound-speed"),
         replace=replace,
@@ -453,6 +461,7 @@ def register_ray_algorithms(*, replace: bool = False) -> None:
     register_algorithm(
         "straight_cgls",
         StraightRayCGLSAlgorithm,
+        specification=SPECS["straight_cgls"],
         description="Straight-ray CGLS sound-speed reconstruction.",
         tags=("ray", "sound-speed"),
         replace=replace,

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .algorithm_specs import AlgorithmSpecification
 
 from .schema import AlgorithmConfig, ReconstructionResult, USCTCase
 
@@ -29,6 +32,32 @@ class AlgorithmEntry:
     factory: AlgorithmFactory
     description: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
+    specification: AlgorithmSpecification | None = None
+
+    def describe(self, variant: str | None = None) -> dict:
+        if self.specification is None:
+            if variant is not None:
+                raise ValueError("this registration has no typed variant interface")
+            return {
+                "schema_version": "usct.algorithm.v1",
+                "algorithm_id": self.name,
+                "description": self.description,
+                "typed_interface_available": False,
+                "allowed_parameters": [],
+                "default_parameters": {},
+                "config_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+                "limitations": [
+                    "Legacy/expert integration; no approved autonomous Agent API."
+                ],
+            }
+        return {
+            "typed_interface_available": True,
+            **self.specification.describe(variant),
+        }
 
 
 _REGISTRY: dict[str, AlgorithmEntry] = {}
@@ -41,6 +70,7 @@ def register_algorithm(
     description: str = "",
     tags: tuple[str, ...] | list[str] = (),
     replace: bool = False,
+    specification: AlgorithmSpecification | None = None,
 ) -> AlgorithmEntry:
     """Register an algorithm factory by stable CLI name."""
 
@@ -49,11 +79,14 @@ def register_algorithm(
         raise ValueError("algorithm name cannot be empty")
     if normalized in _REGISTRY and not replace:
         raise ValueError(f"algorithm already registered: {normalized}")
+    if specification is not None and specification.algorithm_id != normalized:
+        raise ValueError("specification algorithm id must match registration")
     entry = AlgorithmEntry(
         name=normalized,
         factory=factory,
         description=description,
         tags=tuple(tags),
+        specification=specification,
     )
     _REGISTRY[normalized] = entry
     return entry

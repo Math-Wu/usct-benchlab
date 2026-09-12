@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import h5py
 import numpy as np
+import pytest
 
 from usctbench.algorithms.fwi.adapter import (
     KWaveFWIAdapterAlgorithm,
@@ -10,6 +11,36 @@ from usctbench.algorithms.fwi.adapter import (
 )
 from usctbench.algorithms.fwi.tiny import TinyFWIAlgorithm
 from usctbench.core.schema import AlgorithmConfig, ResultStatus
+from usctbench.algorithms.configuration import validate_algorithm_config
+from usctbench.metrics import compute_baseline_improvement_metrics
+
+
+@pytest.mark.parametrize("override", [None, 1510.0])
+def test_external_baseline_uses_case_reference_unless_explicit(
+    synthetic_case, tmp_path, override
+):
+    synthetic_case.metadata["reference_sound_speed_mps"] = 1470.0
+    path = tmp_path / "baseline.mat"
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset(
+            "VEL_ESTIM", data=np.full(synthetic_case.grid.shape, 1490.0)
+        )
+    config = AlgorithmConfig(
+        parameters={"result_path": str(path), "baseline_sound_speed_mps": override}
+    )
+    resolved = validate_algorithm_config("fwi_kwave_adapter", config)
+    assert validate_algorithm_config("fwi_kwave_adapter", resolved) == resolved
+    if override is None:
+        assert "baseline_sound_speed_mps" not in resolved.parameters
+    result = KWaveFWIAdapterAlgorithm().run(synthetic_case, resolved)
+    assert result.status == ResultStatus.SUCCESS
+    expected = compute_baseline_improvement_metrics(
+        result.sound_speed_mps,
+        synthetic_case.ground_truth.sound_speed_mps,
+        1470.0 if override is None else override,
+        mask=synthetic_case.grid.roi_mask,
+    )
+    assert result.metrics["water_baseline_rmse"] == expected["water_baseline_rmse"]
 
 
 def test_tiny_fwi_loss_decreases(synthetic_case):

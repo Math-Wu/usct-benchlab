@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from usctbench.algorithms.configuration import validated_run
+
 import os
 import re
 import subprocess
@@ -126,6 +128,7 @@ class KWaveFWIAdapterAlgorithm:
 
     name = "fwi_kwave_adapter"
 
+    @validated_run
     def run(self, case: USCTCase, config: AlgorithmConfig) -> ReconstructionResult:
         if coerce_bool(config.parameters.get("controlled_operator", False)):
             from usctbench.algorithms.fwi.controlled import run_controlled

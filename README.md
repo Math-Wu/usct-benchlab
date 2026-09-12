@@ -149,6 +149,11 @@ For more detail, see [docs/math_formulation.md](docs/math_formulation.md).
 
 ## Supported Algorithms
 
+For validated Python/YAML parameters, see the [parameter contract](docs/parameter_contract.md).
+Research Agent consumers can discover physical variants and permitted controls with
+`usct list-algorithms --json` and `usct describe-algorithm <id> --json`;
+see the [Agent API guide](docs/agent_algorithm_api.md).
+
 | Algorithm | Command name | Mathematical model | Input requirement | Typical use | Config |
 | --- | --- | --- | --- | --- | --- |
 | CGLS | `straight_cgls` | Straight-ray weighted least squares | `USCTCase` with ring geometry and travel-time measurements | Fast sound-speed baseline | `configs/algorithms/cgls.yaml` |
