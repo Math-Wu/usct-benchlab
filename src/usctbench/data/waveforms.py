@@ -162,7 +162,7 @@ def convert_kwave_pressure_mat(
 ) -> USCTCase:
     """Import actual pressure without generating features from ground truth.
 
-    `C` and `atten` are optional evaluation labels, never input to measurement
+    `C` is an optional evaluation label, never input to measurement
     generation, reference-speed selection, geometry or ROI selection. HDF5
     `C` is already [y,x] for upstream MATLAB [x,y] images. An explicit grid is
     required when xi_orig/yi_orig are unavailable. `water_dataset`, when set,
@@ -208,12 +208,8 @@ def convert_kwave_pressure_mat(
             grid if grid is not None else _coordinate_grid(handle, output_shape)
         )
         truth = {}
-        for key, field in (("C", "sound_speed_mps"), ("atten", "attenuation_np_per_m")):
+        for key, field in (("C", "sound_speed_mps"),):
             if key in handle:
-                # Attenuation units in different upstream exports vary. Do not
-                # label an unconverted attenuation array as Np/m.
-                if key == "atten":
-                    continue
                 image = np.asarray(handle[key], dtype=float)
                 if image.shape != image_grid.shape:
                     from skimage.transform import resize
@@ -258,7 +254,7 @@ def convert_kwave_pressure_mat(
             "measurement_limitations": [
                 "Source strength, detector response and pressure units require acquisition-specific calibration.",
                 "The pressure import itself applies no window, picker, gain normalization or 3D-to-2D correction; derived feature processing is recorded separately.",
-                "Raw attenuation labels are not imported without an explicit unit conversion.",
+                "Raw attenuation labels are outside the sound-speed contract and are not imported.",
             ],
         },
         measurement_provenance=provenance,

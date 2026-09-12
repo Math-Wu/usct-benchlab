@@ -207,7 +207,14 @@ def test_json_stdout_cli_and_case_capabilities(capsys, tmp_path):
     output = capsys.readouterr()
     entries = json.loads(output.out)
     assert output.err == ""
-    assert len(entries) == 9
+    assert len(entries) == 8
+    assert all(entry["algorithm_id"] != "attenuation_sirt" for entry in entries)
+    with pytest.raises(KeyError):
+        get_algorithm("attenuation_sirt")
+    for entry in entries:
+        schema = entry.get("config_schema", {})
+        assert "attenuation_frequencies_hz" not in json.dumps(schema)
+        assert "attenuation_upper_np_per_m" not in json.dumps(schema)
     legacy = next(
         row for row in entries if row["algorithm_id"] == "diffusion_fwi_kwave_adapter"
     )

@@ -22,6 +22,22 @@ from usctbench.data.synthetic import make_sound_speed_case
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "attenuation_frequencies_hz",
+        "sos_atten_freqs_mhz",
+        "atten_iters",
+        "attenrange",
+        "atten_bkgnd",
+        "sos2atten",
+        "y_atten",
+    ],
+)
+def test_removed_fwi_material_parameters_fail_closed(tmp_path, field):
+    assert_admission_paths(tmp_path, "fwi_kwave_adapter", {field: None}, False)
+
+
 def assert_admission_paths(tmp_path, name, parameters, accepted):
     """YAML, repeated resolution and direct execution share admission decisions."""
     config = AlgorithmConfig(name=name, parameters=parameters)
@@ -137,7 +153,6 @@ def test_born_operator_parameter_limits(tmp_path, mode, field, value, accepted):
         ("c_init", "initial_sound_speed_mps", 1490.0, 1490.0),
         ("velocity_bounds", "sound_speed_bounds_mps", [1400, 1600], (1400, 1600)),
         ("sos_freqs_mhz", "sos_frequencies_hz", 0.3, [300000.0]),
-        ("sos_atten_freqs_mhz", "attenuation_frequencies_hz", 0.45, [450000.0]),
     ],
 )
 def test_external_alias_null_scalar_and_roundtrip(tmp_path, old, new, value, canonical):
@@ -157,9 +172,7 @@ def test_external_alias_null_scalar_and_roundtrip(tmp_path, old, new, value, can
     assert_admission_paths(tmp_path, "fwi_kwave_adapter", {old: value, new: bad}, False)
 
 
-@pytest.mark.parametrize(
-    "field,value", [("sos_iters", 3), ("atten_iters", 2), ("cuda_devices", 0)]
-)
+@pytest.mark.parametrize("field,value", [("sos_iters", 3), ("cuda_devices", 0)])
 def test_external_legacy_scalar_sequences(tmp_path, field, value):
     resolved = assert_admission_paths(
         tmp_path, "fwi_kwave_adapter", {field: value}, True
@@ -189,7 +202,6 @@ def test_external_invalid_legacy_values(tmp_path, parameters):
         "straight_sart",
         "bent_ray_gn",
         "rwave_adapter",
-        "attenuation_sirt",
         "fwi_kwave_adapter",
         "fwi_tiny",
     ],

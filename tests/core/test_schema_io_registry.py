@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import h5py
 import pytest
 from skimage.metrics import structural_similarity
 
@@ -13,6 +14,7 @@ from usctbench.core.registry import (
 )
 from usctbench.core.schema import (
     AlgorithmConfig,
+    GroundTruthSpec,
     MeasurementDomain,
     MeasurementSpec,
     ReconstructionResult,
@@ -42,6 +44,32 @@ def test_case_and_result_hdf5_roundtrip(written_case, tmp_path):
     assert loaded.algorithm == "dummy"
     assert loaded.case_id == case.case_id
     assert loaded.metrics["ok"] is True
+
+
+def test_sound_speed_contract_has_no_material_absorption_output(written_case, tmp_path):
+    assert "log_amp" not in MeasurementSpec.model_fields
+    assert "attenuation_np_per_m" not in GroundTruthSpec.model_fields
+    assert "attenuation_np_per_m" not in ReconstructionResult.model_fields
+    with pytest.raises(ValueError, match="feature-domain"):
+        MeasurementSpec(domain="features", log_amp=np.ones((8, 8)))
+    case = read_case_hdf5(written_case)
+    truth = case.ground_truth.sound_speed_mps
+    result = ReconstructionResult(
+        algorithm="straight_cgls", case_id=case.case_id, sound_speed_mps=truth
+    )
+    path = write_result_hdf5(result, tmp_path / "sos_result.h5")
+    np.testing.assert_array_equal(read_result_hdf5(path).sound_speed_mps, truth)
+    for file in (written_case, path):
+        with h5py.File(file) as handle:
+            names = []
+            handle.visit(names.append)
+            assert not any("attenuation" in name or "log_amp" in name for name in names)
+    # No old attenuation-only feature reader remains.
+    with h5py.File(written_case, "a") as handle:
+        del handle["measurement/delta_tof_s"]
+        handle["measurement/log_amp"] = np.ones((8, 8))
+    with pytest.raises(ValueError, match="feature-domain"):
+        read_case_hdf5(written_case)
 
 
 def test_registry_registers_and_instantiates_algorithm():

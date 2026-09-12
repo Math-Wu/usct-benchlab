@@ -285,27 +285,10 @@ SPECS = {
             )
         ),
     ),
-    "attenuation_sirt": AlgorithmSpecification(
-        "attenuation_sirt",
-        "straight_ray_attenuation",
-        "Legacy straight-ray log-amplitude tomography.",
-        (
-            Variant(
-                "legacy_log_amplitude",
-                "A alpha = -log_amplitude",
-                required_observations=("log_amp",),
-                iteration_unit="SIRT sweep",
-                limitations=(
-                    "Frequency/unit provenance must be inspected; no alpha_ref contract migration is implied.",
-                    "Legacy frequency stacks are averaged, not jointly fitted to a frequency law.",
-                ),
-            ),
-        ),
-    ),
     "fwi_kwave_adapter": AlgorithmSpecification(
         "fwi_kwave_adapter",
         "full_wave",
-        "External FWI result/pipeline boundary and controlled discrete reference.",
+        "2-D sound-speed FWI result/pipeline boundary and controlled discrete reference; attenuation is not estimated.",
         (
             Variant(
                 "import_result",

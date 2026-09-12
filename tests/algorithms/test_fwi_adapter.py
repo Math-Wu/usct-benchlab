@@ -8,6 +8,7 @@ from usctbench.algorithms.fwi.adapter import (
     KWaveFWIAdapterAlgorithm,
     _iteration_stack,
     read_kwave_fwi_result,
+    _build_external_pipeline_command,
 )
 from usctbench.algorithms.fwi.tiny import TinyFWIAlgorithm
 from usctbench.core.schema import AlgorithmConfig, ResultStatus
@@ -61,6 +62,9 @@ def test_kwave_adapter_ingests_result_file(synthetic_case, tmp_path):
             "C_INTERP", data=np.asarray(synthetic_case.ground_truth.sound_speed_mps)
         )
         handle.create_dataset("LOSS_ITER", data=np.array([3.0, 2.0, 1.0]))
+        # Unknown upstream material arrays must not become BenchLab quantities.
+        for name in ("ATTEN_ESTIM", "ATTEN_ESTIM_ITER", "ATTEN_INIT_USED"):
+            handle.create_dataset(name, data=np.full((2, 3), np.nan))
 
     external = read_kwave_fwi_result(result_path)
     result = KWaveFWIAdapterAlgorithm().run(
@@ -71,6 +75,36 @@ def test_kwave_adapter_ingests_result_file(synthetic_case, tmp_path):
     assert result.status == ResultStatus.SUCCESS
     assert result.metrics["external_result_loaded"] is True
     assert result.sound_speed_mps is not None
+    np.testing.assert_array_equal(result.sound_speed_mps, np.full((12, 12), 1490.0))
+    assert not any("atten" in key for key in external)
+    assert not any("atten" in key for key in result.model_dump())
+    assert not any("atten" in key for key in result.metrics)
+
+
+def test_legacy_fwi_command_fixes_absorption_without_changing_pml(
+    synthetic_case, tmp_path
+):
+    config = validate_algorithm_config(
+        "fwi_kwave_adapter",
+        AlgorithmConfig(
+            parameters={
+                "dataset_path": str(tmp_path / "input.mat"),
+                "a0": 12.0,
+                "sos_freqs_mhz": [0.2, 0.4],
+                "sos_iters": [3, 4],
+            }
+        ),
+    )
+    command = _build_external_pipeline_command(
+        synthetic_case, config, tmp_path / "result.mat"
+    )["commands"][-1]
+    assert command[command.index("--a0") + 1] == "12.0"
+    for flag in ("--atten-bkgnd", "--sos2atten", "--atten-iters"):
+        assert command[command.index(flag) + 1] == "0"
+    assert command[-1] == "--sos-atten-freqs-mhz"
+    assert command[
+        command.index("--sos-iters") + 1 : command.index("--sos-iters") + 3
+    ] == ["3", "4"]
 
 
 def test_kwave_adapter_skips_missing_result(synthetic_case, tmp_path):

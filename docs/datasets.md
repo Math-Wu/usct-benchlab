@@ -93,3 +93,11 @@ checkpoints/
 ```
 
 Only source, configs, tests, docs, and small README figures belong in Git.
+
+## Imported quantities
+
+The case schema imports sound speed and supported pressure/ToF observations.
+Additional raw NBPslices2D `att`/`y` and k-Wave material maps are intentionally
+ignored; they are not converted into reconstruction labels or features. Density
+metadata and geometry handling remain unchanged. Older attenuation-bearing
+BenchLab HDF5 files have no compatibility guarantee; see [parameter contract](parameter_contract.md).

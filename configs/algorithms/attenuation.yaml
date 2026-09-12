@@ -1,7 +1,0 @@
-name: attenuation_sirt
-parameters:
-  iterations: 50
-  relaxation: 0.8
-  attenuation_upper_np_per_m: 80.0
-  min_ray_weight: 0.0
-  ray_weight_power: 1.0

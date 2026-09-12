@@ -26,7 +26,6 @@ REQUIRED = [
     "src/usctbench/algorithms/rwave.py",
     "src/usctbench/algorithms/fwi/adapter.py",
     "src/usctbench/algorithms/fwi/diffusion_adapter.py",
-    "configs/algorithms/attenuation.yaml",
     "configs/algorithms/bent_ray.yaml",
     "configs/algorithms/cgls.yaml",
     "configs/algorithms/diffusion_fwi_kwave.yaml",

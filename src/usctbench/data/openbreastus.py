@@ -196,7 +196,6 @@ def _file_record(root: Path, path: Path) -> dict[str, Any]:
 def _case_capabilities(files: list[dict[str, Any]]) -> dict[str, Any]:
     roles = {role for file in files for role in file["roles"]}
     has_sound_speed = "sound_speed" in roles
-    has_attenuation = "attenuation" in roles
     has_wavefield = "wavefield" in roles
     has_reference = "reference" in roles
     has_geometry = "geometry" in roles
@@ -222,7 +221,6 @@ def _case_capabilities(files: list[dict[str, Any]]) -> dict[str, Any]:
         conversion_modes.append("frequency_reference_features")
     return {
         "has_sound_speed": has_sound_speed,
-        "has_attenuation": has_attenuation,
         "has_wavefield": has_wavefield,
         "has_reference": has_reference,
         "has_geometry": has_geometry,
@@ -246,7 +244,7 @@ def _case_limitations(capabilities: dict[str, Any]) -> list[str]:
         )
     if "kwave_channel_mat_to_feature_case" in modes:
         limitations.append(
-            "k-Wave simulation case: attenuation evidence is simulated, not raw measured OpenBreastUS RF data"
+            "k-Wave simulation case: source pressure is simulated, not raw measured OpenBreastUS RF data"
         )
     if capabilities.get("has_wavefield") and not capabilities.get("has_reference"):
         limitations.append(
@@ -311,7 +309,7 @@ def _roles(path: Path) -> list[str]:
     ):
         roles.append("sound_speed")
     if any(token in text for token in ("attenuation", "atten", "alpha")):
-        roles.append("attenuation")
+        roles.append("ignored_raw_quantity")
     if any(
         token in text
         for token in (
@@ -438,7 +436,7 @@ def _shape_from_schema(schema: dict[str, Any]) -> Any:
 
 def _schema_roles(schema: dict[str, Any]) -> list[str]:
     if schema.get("kwave_channel_mat"):
-        return ["sound_speed", "attenuation", "wavefield", "geometry"]
+        return ["sound_speed", "wavefield", "geometry"]
     return []
 
 

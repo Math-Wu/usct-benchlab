@@ -63,9 +63,6 @@ _CLI_PARAMS = {
     "ncalc": "--ncalc",
     "xmax_mm": "--xmax-mm",
     "circle_radius_mm": "--circle-radius-mm",
-    "atten_bkgnd": "--atten-bkgnd",
-    "sos2atten": "--sos2atten",
-    "y_atten": "--y-atten",
     "f_tx_mhz": "--f-tx-mhz",
     "downsample_factor": "--downsample-factor",
     "backend": "--backend",
@@ -99,11 +96,8 @@ _CLI_PARAMS = {
 _CLI_SEQUENCE_PARAMS = {
     "cuda_devices": "--cuda-devices",
     "sos_freqs_mhz": "--sos-freqs-mhz",
-    "sos_atten_freqs_mhz": "--sos-atten-freqs-mhz",
     "sos_iters": "--sos-iters",
-    "atten_iters": "--atten-iters",
     "crange": "--crange",
-    "attenrange": "--attenrange",
     "velocity_bounds": "--velocity-bounds",
 }
 _CLI_BOOL_FLAGS = {
@@ -180,7 +174,7 @@ class KWaveFWIAdapterAlgorithm:
         selected_iteration, selection_metrics = _configured_iteration(
             config, external, case
         )
-        sound_speed, attenuation = _selected_result_images(
+        sound_speed = _selected_sound_speed(
             external, selected_iteration, case.grid.shape
         )
         c0 = float(
@@ -203,50 +197,23 @@ class KWaveFWIAdapterAlgorithm:
             metrics.update(diagnostic_metrics)
         _add_case_ground_truth_metrics(metrics, sound_speed, external, case, c0)
         _add_kwave_ground_truth_metrics(metrics, sound_speed, external, case, c0)
-        if (
-            attenuation is not None
-            and case.ground_truth.attenuation_np_per_m is not None
-        ):
-            metrics.update(
-                compute_image_metrics(
-                    attenuation,
-                    np.asarray(case.ground_truth.attenuation_np_per_m, dtype=float),
-                    mask=case.grid.roi_mask,
-                    prefix="attenuation_",
-                )
-            )
         artifacts = _external_artifacts(config, external, result_path)
         return ReconstructionResult(
             algorithm=self.name,
             case_id=case.case_id,
             sound_speed_mps=sound_speed,
-            attenuation_np_per_m=attenuation,
             metrics=metrics,
             artifacts=artifacts,
         )
 
 
-def _selected_result_images(
+def _selected_sound_speed(
     external: dict[str, Any], selected_iteration: int | None, shape: tuple[int, int]
-) -> tuple[np.ndarray, np.ndarray | None]:
+) -> np.ndarray:
     selected_sound_speed = _select_iteration_image(
         external, "sound_speed_iter_mps", "sound_speed_mps", selected_iteration
     )
-    selected_attenuation = _select_iteration_image(
-        external,
-        "attenuation_iter_np_per_m",
-        "attenuation_np_per_m",
-        selected_iteration,
-    )
-    sound_speed = _resize_to_shape(selected_sound_speed, shape)
-    attenuation = (
-        _resize_to_shape(external["attenuation_np_per_m"], shape)
-        if external.get("attenuation_np_per_m") is not None
-        else None
-    )
-    if selected_attenuation is not None:
-        attenuation = _resize_to_shape(selected_attenuation, shape)
-    return sound_speed, attenuation
+    return _resize_to_shape(selected_sound_speed, shape)
 
 
 def _base_result_metrics(
@@ -434,18 +401,11 @@ def read_kwave_fwi_result(path: str | Path) -> dict[str, Any]:
     result_path = Path(path).expanduser().resolve()
     with h5py.File(result_path, "r") as handle:
         sound_speed = _require_dataset(handle, "VEL_ESTIM")
-        attenuation = _read_dataset(handle, "ATTEN_ESTIM")
         ground_truth = _read_dataset(handle, "C_INTERP")
         sound_speed_iter = _read_dataset(handle, "VEL_ESTIM_ITER")
-        attenuation_iter = _read_dataset(handle, "ATTEN_ESTIM_ITER")
         losses = _read_vector(handle, "LOSS_ITER")
         return {
             "sound_speed_mps": np.asarray(sound_speed, dtype=float),
-            "attenuation_np_per_m": (
-                np.asarray(attenuation, dtype=float)
-                if attenuation is not None
-                else None
-            ),
             "ground_truth_sound_speed_mps": (
                 np.asarray(ground_truth, dtype=float)
                 if ground_truth is not None
@@ -456,13 +416,7 @@ def read_kwave_fwi_result(path: str | Path) -> dict[str, Any]:
                 if sound_speed_iter is not None
                 else None
             ),
-            "attenuation_iter_np_per_m": (
-                np.asarray(attenuation_iter, dtype=float)
-                if attenuation_iter is not None
-                else None
-            ),
             "initial_sound_speed_mps": _read_dataset(handle, "VEL_INIT"),
-            "initial_attenuation_np_per_m": _read_dataset(handle, "ATTEN_INIT_USED"),
             "losses": losses.tolist(),
             "iterations": int(losses.size),
             "initial_loss": float(losses[0]) if losses.size else None,
@@ -622,6 +576,19 @@ def _build_external_pipeline_command(
 
     command.extend(
         _expand_text(value) for value in config.parameters.get("pipeline_args", [])
+    )
+    # The legacy pipeline otherwise defaults to nonzero absorption in simulation.
+    # Keep sound-speed-only stages explicit; these are not user hyperparameters.
+    command.extend(
+        [
+            "--atten-bkgnd",
+            "0",
+            "--sos2atten",
+            "0",
+            "--atten-iters",
+            "0",
+            "--sos-atten-freqs-mhz",
+        ]
     )
     commands = _with_optional_warm_start_steps(
         command,

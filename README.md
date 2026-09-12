@@ -2,11 +2,11 @@
 
 [中文说明](README.zh-CN.md)
 
-`usct-benchlab` is a lightweight Python benchmark package for ultrasound
-computed tomography (USCT) reconstruction algorithms with unified input/output,
-classical baselines, and FWI adapter support. It provides dataset conversion
-helpers, runnable algorithm configs, common metrics, preview figures, and
-benchmark summaries for reproducible comparisons.
+`usct-benchlab` focuses on research-grade numerical benchmarking and runtime
+integration for **2-D ultrasound sound-speed reconstruction**. It provides unified
+case/result interfaces, dataset preparation, classical and native physical-model
+solvers, FWI adapters, metrics, and reproducible benchmark reports. It does not
+provide an attenuation-reconstruction API or claim clinical validity.
 
 ## What is USCT?
 
@@ -16,10 +16,8 @@ the object according to an acoustic wave equation, and receiver transducers
 measure the resulting pressure traces. The inverse problem is to recover
 spatial acoustic properties from those measurements.
 
-The main reconstruction target is the sound-speed map $c(x)$. Related physical
-properties include density $\rho(x)$ and attenuation $\alpha(x)$. This package
-converts datasets to a common `USCTCase` schema and returns every algorithm
-output as a `ReconstructionResult`.
+The reconstructed quantity is the sound-speed map $c(x)$. Datasets use the
+common `USCTCase` schema and algorithm outputs use `ReconstructionResult`.
 
 ## Mathematical Formulation
 
@@ -159,7 +157,6 @@ see the [Agent API guide](docs/agent_algorithm_api.md).
 | CGLS | `straight_cgls` | Straight-ray weighted least squares | `USCTCase` with ring geometry and travel-time measurements | Fast sound-speed baseline | `configs/algorithms/cgls.yaml` |
 | SIRT | `straight_sirt` | Simultaneous iterative ray tomography | `USCTCase` with ring geometry and travel-time measurements | Robust iterative sound-speed baseline | `configs/algorithms/sirt.yaml` |
 | SART | `straight_sart` | Ordered/subset algebraic ray update | `USCTCase` with ring geometry and travel-time measurements | Ordered-update straight-ray baseline | `configs/algorithms/sart.yaml` |
-| Attenuation SIRT | `attenuation_sirt` | Straight-ray log-amplitude tomography | `USCTCase` with log-amplitude measurements | Attenuation baseline | `configs/algorithms/attenuation.yaml` |
 | Bent-ray | `bent_ray_gn` | Nonlinear Eikonal / fast marching | First-arrival times or calibrated delays | Refraction-corrected tomography | `configs/algorithms/bent_ray.yaml` |
 | rWave adapter | `rwave_adapter` | Relinearized finite-frequency Ray-Born | Complex `(frequency,tx,rx)` pressure and calibrated source or independent water reference | Scattering-sensitive pressure inversion | `configs/algorithms/rwave.yaml` |
 | FWI adapter | `fwi_kwave_adapter` | PDE-level full-wave inversion adapter | `USCTCase` plus external k-Wave/FWI artifact or command path | High-fidelity FWI reporting | `configs/algorithms/fwi_kwave.yaml` |

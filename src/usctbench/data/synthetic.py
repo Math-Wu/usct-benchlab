@@ -70,28 +70,6 @@ def circular_sound_speed(
     return image
 
 
-def circular_attenuation(
-    grid: GridSpec,
-    *,
-    background_np_per_m: float = 0.0,
-    inclusion_np_per_m: float = 8.0,
-    radius_m: float = 0.006,
-    center_m: tuple[float, float] = (0.0, 0.0),
-) -> np.ndarray:
-    """Create a circular attenuation phantom in Np/m."""
-
-    y0, x0 = grid.origin_m
-    dy, dx = grid.spacing_m
-    ny, nx = grid.shape
-    y = y0 + (np.arange(ny) + 0.5) * dy
-    x = x0 + (np.arange(nx) + 0.5) * dx
-    yy, xx = np.meshgrid(y, x, indexing="ij")
-    mask = (yy - center_m[0]) ** 2 + (xx - center_m[1]) ** 2 <= radius_m**2
-    image = np.full(grid.shape, background_np_per_m, dtype=float)
-    image[mask] = inclusion_np_per_m
-    return image
-
-
 def make_sound_speed_case(
     *,
     case_id: str = "synthetic_circular_sos",
@@ -146,52 +124,6 @@ def make_sound_speed_case(
                 "measurement_limitations": [
                     "fast debug / solver sanity benchmark",
                     "travel-time data are generated directly from ground truth",
-                    "not a formal wavefield inversion benchmark",
-                ],
-            },
-        ),
-    )
-
-
-def make_attenuation_case(
-    *,
-    case_id: str = "synthetic_circular_attenuation",
-    shape: tuple[int, int] = (32, 32),
-    n_transducers: int = 32,
-) -> USCTCase:
-    """Create a feature-domain case with straight-ray log-amplitude ratios."""
-
-    grid = make_grid(shape=shape)
-    geometry = make_ring_geometry(n_transducers=n_transducers)
-    attenuation = circular_attenuation(grid)
-    projector = StraightRayProjector.from_grid_geometry(grid, geometry)
-    line_integral = projector.forward(attenuation).reshape(
-        (n_transducers, n_transducers)
-    )
-    valid_mask = ~np.eye(n_transducers, dtype=bool)
-    return USCTCase(
-        case_id=case_id,
-        grid=grid,
-        geometry=geometry,
-        measurement=MeasurementSpec(
-            domain="features", log_amp=-line_integral, valid_mask=valid_mask
-        ),
-        ground_truth=GroundTruthSpec(attenuation_np_per_m=attenuation),
-        metadata=stamp_measurement_metadata(
-            {
-                "case_type": "synthetic_oracle",
-                "synthetic": True,
-                "feature_provenance": "oracle_straight_ray_forward_from_ground_truth_attenuation",
-                "log_amp_convention": "log(case/reference) = -integral(alpha ds)",
-            },
-            measurement_provenance=MeasurementProvenance.ORACLE_TRAVEL_TIME,
-            benchmark_type="oracle_travel_time",
-            forward_model="straight_ray_oracle_from_ground_truth",
-            feature_source="oracle_straight_ray_log_amp",
-            extra={
-                "measurement_limitations": [
-                    "fast debug / solver sanity benchmark",
-                    "attenuation line integral is generated directly from ground truth",
                     "not a formal wavefield inversion benchmark",
                 ],
             },

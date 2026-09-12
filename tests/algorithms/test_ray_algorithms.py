@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from usctbench.algorithms.attenuation import AttenuationSIRTAlgorithm
 from usctbench.algorithms.bent_ray import BentRayGNAdapter
 from usctbench.algorithms.ray import (
     StraightRayCGLSAlgorithm,
@@ -10,7 +9,6 @@ from usctbench.algorithms.ray import (
 )
 from usctbench.algorithms.rwave import RWaveAdapter
 from usctbench.core.schema import AlgorithmConfig, ResultStatus
-from usctbench.data.synthetic import make_attenuation_case
 
 
 def test_projector_adjoint_identity(synthetic_case):
@@ -95,14 +93,3 @@ def test_string_false_bool_parameters_do_not_enable_ray_options(synthetic_case):
     assert bent.metrics["roi_update_only"] is False
     assert bent.metrics["roi_laplacian"] is False
     assert bent.metrics["line_search"] is False
-
-
-def test_attenuation_algorithm_runs_on_log_amplitude_case():
-    case = make_attenuation_case(shape=(10, 10), n_transducers=8)
-    result = AttenuationSIRTAlgorithm().run(
-        case, AlgorithmConfig(parameters={"iterations": 3})
-    )
-
-    assert result.status == ResultStatus.SUCCESS
-    assert result.attenuation_np_per_m is not None
-    assert result.metrics["attenuation_input_has_signal"] is True

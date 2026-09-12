@@ -166,22 +166,3 @@ def test_stage_change_resets_update_patience_not_global_iteration_budget():
     assert record["stage_id"] == record["selected_stage_id"] == "d"
     assert record["resolved_policy"]["max_iterations"] == 4
     assert [x["stage_id"] for x in monitor.history] == ["a", "a", "b", "c", "d"]
-
-
-def test_attenuation_zero_reference_does_not_create_a_physical_scale():
-    from usctbench.algorithms.attenuation import AttenuationSIRTAlgorithm
-    from usctbench.data.synthetic import make_sound_speed_case
-
-    case = make_sound_speed_case(shape=(8, 8), n_transducers=8)
-    case.measurement.log_amp = np.full((8, 8), -0.02)
-    config = AlgorithmConfig(
-        run_controls=RunControls(max_iterations=3, min_iterations=1, update_rtol=1.0)
-    )
-    result = AttenuationSIRTAlgorithm().run(case, config)
-    assert result.status == "success", result.failure_reason
-    history = result.metrics["iteration_history"]
-    assert history[1]["relative_update"] is None
-    assert history[2]["relative_update"] is not None
-    assert result.metrics["iterations"] >= 2
-    assert "update_reference_scale_np_per_m" not in result.metrics
-    assert "frequency_unspecified" in result.metrics["stopping"]["update_units"]

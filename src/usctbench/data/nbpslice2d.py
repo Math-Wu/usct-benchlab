@@ -68,7 +68,6 @@ def make_nbp_slice2d_smoke_subset(
     converted_shape: tuple[int, int] = (64, 64),
     n_transducers: int = 32,
     reference_sound_speed_mps: float = 1500.0,
-    attenuation_frequency_mhz: float = 1.0,
     subset_role: str = "interface_smoke",
 ) -> dict[str, Any]:
     """Create standard USCTCase smoke cases from NBPslices2D."""
@@ -84,7 +83,6 @@ def make_nbp_slice2d_smoke_subset(
         output_shape=converted_shape,
         n_transducers=n_transducers,
         reference_sound_speed_mps=reference_sound_speed_mps,
-        attenuation_frequency_mhz=attenuation_frequency_mhz,
     )
     manifest = {
         "schema_version": "0.1",
@@ -96,14 +94,12 @@ def make_nbp_slice2d_smoke_subset(
         "n_transducers": n_transducers,
         "subset_role": subset_role,
         "reference_sound_speed_mps": reference_sound_speed_mps,
-        "attenuation_frequency_mhz": attenuation_frequency_mhz,
         "index_summary": index["summary"],
         "converted_cases": converted_cases,
         "notes": [
             "NBPslices2D contains numerical phantom property maps, not measured RF data.",
-            "Converted cases use straight-ray surrogate travel-time and attenuation line-integral features.",
+            "Converted cases use straight-ray surrogate travel-time features.",
             "Sound speed is converted from mm/us to m/s.",
-            "Attenuation is converted from dB/(MHz^y mm) to Np/m at attenuation_frequency_mhz.",
         ],
     }
     manifest_path = out_path / "nbpslice2d_smoke_manifest.json"
@@ -121,7 +117,6 @@ def make_nbp_slice2d_quality_subset(
     converted_shape: tuple[int, int] = (256, 256),
     n_transducers: int = 128,
     reference_sound_speed_mps: float = 1500.0,
-    attenuation_frequency_mhz: float = 1.0,
 ) -> dict[str, Any]:
     """Create 256x256 NBPslice2D cases for visual quality comparison."""
 
@@ -132,6 +127,5 @@ def make_nbp_slice2d_quality_subset(
         converted_shape=converted_shape,
         n_transducers=n_transducers,
         reference_sound_speed_mps=reference_sound_speed_mps,
-        attenuation_frequency_mhz=attenuation_frequency_mhz,
         subset_role="quality_comparison",
     )

@@ -317,11 +317,7 @@ def _write_result_artifacts(
     peak_memory_mb: float,
     case: USCTCase | None = None,
 ) -> None:
-    preview_image = (
-        result.sound_speed_mps
-        if result.sound_speed_mps is not None
-        else result.attenuation_np_per_m
-    )
+    preview_image = result.sound_speed_mps
     if preview_image is not None:
         preview_path = write_preview_png(preview_image, out_dir / "preview.png")
         result.artifacts.setdefault("preview", str(preview_path))

@@ -347,21 +347,6 @@ class BornParameters(GaussNewtonParameters):
         return self
 
 
-class AttenuationParameters(Parameters):
-    relaxation: Annotated[float, Field(strict=True, gt=0, lt=2)] = parameter(
-        0.8, "Algebraic attenuation relaxation.", exposure="agent"
-    )
-    attenuation_upper_np_per_m: Positive = parameter(
-        80.0,
-        "Legacy projection bound; reference frequency is not established by this parameter.",
-        "Np/m (legacy frequency provenance)",
-    )
-    min_ray_weight: Annotated[float, Field(strict=True, ge=0, le=1)] = parameter(
-        0.0, "Reject confidence below threshold."
-    )
-    ray_weight_power: Positive = parameter(1.0, "Confidence exponent.")
-
-
 # Fixed-background CGLS has no nonlinear step, smoothing or inner solver controls.
 # Reuse the identical physical field definitions without advertising unused knobs.
 FixedBornParameters = create_model(
