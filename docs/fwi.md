@@ -5,6 +5,10 @@ production FWI path. CPU is reference/debug only, never an automatic fallback.
 Ordinary installation and CI require neither MATLAB nor GPU. Reconstruction is
 2-D sound-speed-only; no diffusion runtime or attenuation reconstruction is included.
 
+`TinyFWIAlgorithm` remains directly importable from
+`usctbench.algorithms.fwi.tiny` for mathematical regression tests only. It is
+not registered as a CLI algorithm or exposed through Agent discovery.
+
 ## Deployment
 
 Use clean `lucian-dw/WaveformInversionUST` at exactly

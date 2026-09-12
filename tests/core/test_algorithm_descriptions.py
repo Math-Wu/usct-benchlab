@@ -206,7 +206,15 @@ def test_json_stdout_cli_and_case_capabilities(capsys, tmp_path):
     output = capsys.readouterr()
     entries = json.loads(output.out)
     assert output.err == ""
-    assert len(entries) == 7
+    assert len(entries) == 6
+    ids = {entry["algorithm_id"] for entry in entries}
+    assert "fwi_wust" in ids
+    assert "fwi_tiny" not in ids
+    assert "fwi_tiny" not in SPECS
+    with pytest.raises(KeyError):
+        get_algorithm("fwi_tiny")
+    with pytest.raises(KeyError):
+        make_agent_config("fwi_tiny")
     assert all(entry["algorithm_id"] != "attenuation_sirt" for entry in entries)
     with pytest.raises(KeyError):
         get_algorithm("attenuation_sirt")

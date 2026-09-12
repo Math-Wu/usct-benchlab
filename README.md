@@ -160,7 +160,6 @@ see the [Agent API guide](docs/agent_algorithm_api.md).
 | Bent-ray | `bent_ray_gn` | Nonlinear Eikonal / fast marching | First-arrival times or calibrated delays | Refraction-corrected tomography | `configs/algorithms/bent_ray.yaml` |
 | rWave adapter | `rwave_adapter` | Relinearized finite-frequency Ray-Born | Complex `(frequency,tx,rx)` pressure and calibrated source or independent water reference | Scattering-sensitive pressure inversion | `configs/algorithms/rwave.yaml` |
 | WUST FWI | `fwi_wust` | PDE-level frequency-domain inversion | Total complex pressure, declared convention and mask | CUDA full-wave reconstruction | `configs/algorithms/fwi_wust.yaml` |
-| Tiny FWI sanity | `fwi_tiny` | Small waveform-inversion sanity model | Small synthetic sound-speed case | Local waveform-inversion plumbing test | `configs/algorithms/fwi_tiny.yaml` |
 
 More details are in [docs/algorithms.md](docs/algorithms.md).
 

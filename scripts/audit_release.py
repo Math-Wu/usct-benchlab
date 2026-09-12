@@ -31,7 +31,7 @@ REQUIRED = [
     "configs/algorithms/bent_ray.yaml",
     "configs/algorithms/cgls.yaml",
     "configs/algorithms/fwi_wust.yaml",
-    "configs/algorithms/fwi_tiny.yaml",
+    "src/usctbench/algorithms/fwi/tiny.py",
     "configs/algorithms/rwave.yaml",
     "configs/algorithms/sart.yaml",
     "configs/algorithms/sirt.yaml",

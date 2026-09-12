@@ -142,7 +142,6 @@ k-Wave/FWI 结果的适配器。更详细的数学说明见
 | Bent-ray | `bent_ray_gn` | Eikonal / fast marching 非线性到时反演 | 首波到时或经过校准的到时差 | 折射校正 | `configs/algorithms/bent_ray.yaml` |
 | rWave adapter | `rwave_adapter` | 更新背景的有限频率 Ray-Born 散射 | 复压力以及源校准或独立水参考 | 散射敏感反演 | `configs/algorithms/rwave.yaml` |
 | WUST FWI | `fwi_wust` | 频域 PDE 全波反演 | 复数总压力、显式约定及掩码 | MATLAB/CUDA 重建 | `configs/algorithms/fwi_wust.yaml` |
-| Tiny FWI sanity | `fwi_tiny` | 小型 waveform-inversion sanity model | 小尺寸合成声速样本 | 本地 FWI 管线 sanity check | `configs/algorithms/fwi_tiny.yaml` |
 
 更多算法说明见 [docs/algorithms.md](docs/algorithms.md)。
 

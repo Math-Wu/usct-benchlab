@@ -37,13 +37,14 @@ def test_removed_fwi_material_parameters_fail_closed(tmp_path, field):
     assert_admission_paths(tmp_path, "fwi_wust", {field: None}, False)
 
 
-def assert_admission_paths(tmp_path, name, parameters, accepted):
+def assert_admission_paths(tmp_path, name, parameters, accepted, *, algorithm=None):
     """YAML, repeated resolution and direct execution share admission decisions."""
     config = AlgorithmConfig(name=name, parameters=parameters)
     path = tmp_path / "admission.yaml"
     path.write_text(yaml.safe_dump(config.model_dump(mode="json")))
     register_builtin_algorithms()
-    algorithm = get_algorithm(name)
+    if algorithm is None:
+        algorithm = get_algorithm(name)
     case = make_sound_speed_case(shape=(8, 8), n_transducers=8)
     if accepted:
         resolved = validate_algorithm_config(name, config)
@@ -109,13 +110,27 @@ def test_fixed_born_budget_alias_against_run_controls(count, accepted):
     ],
 )
 def test_tiny_rejects_unsupported_legacy_controls(tmp_path, key, value):
-    assert_admission_paths(tmp_path, "fwi_tiny", {"steps": 2, key: value}, False)
+    from usctbench.algorithms.fwi.tiny import TinyFWIAlgorithm
+
+    assert_admission_paths(
+        tmp_path,
+        "fwi_tiny",
+        {"steps": 2, key: value},
+        False,
+        algorithm=TinyFWIAlgorithm(),
+    )
 
 
 def test_tiny_steps_behavior_unchanged(tmp_path):
     from usctbench.algorithms.fwi.tiny import TinyFWIAlgorithm
 
-    resolved = assert_admission_paths(tmp_path, "fwi_tiny", {"steps": 2}, True)
+    resolved = assert_admission_paths(
+        tmp_path,
+        "fwi_tiny",
+        {"steps": 2},
+        True,
+        algorithm=TinyFWIAlgorithm(),
+    )
     case = make_sound_speed_case(shape=(8, 8), n_transducers=8)
     algorithm = TinyFWIAlgorithm()
     before = algorithm.run.__wrapped__(

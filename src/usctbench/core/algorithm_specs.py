@@ -337,26 +337,6 @@ SPECS = {
             ),
         ),
     ),
-    "fwi_tiny": AlgorithmSpecification(
-        "fwi_tiny",
-        "synthetic_waveform_sanity",
-        "Small internally synthesized waveform proof-of-life.",
-        (
-            Variant(
-                "tiny_synthetic",
-                "central_path_waveform_sanity",
-                observation_domains=("property_map",),
-                required_observations=("ground_truth.sound_speed_mps",),
-                iteration_unit="gradient_step",
-                runtime_requirements=("numpy",),
-                limitations=(
-                    "Generates observations from GT internally; not an independent measurement benchmark.",
-                    "Only legacy steps are supported, not generic online stopping.",
-                ),
-                online_controls=False,
-            ),
-        ),
-    ),
 }
 
 

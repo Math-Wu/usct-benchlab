@@ -12,7 +12,6 @@ straight-ray substitutes. Historical README example images predate this change.
 | Bent-ray / `bent_ray_gn` | Nonlinear fast-marching Eikonal ToF | Sound speed | First arrivals with refraction; no diffraction, caustics or multiple arrivals | `configs/algorithms/bent_ray.yaml` |
 | Born / `rwave_adapter` | Complex pressure, current-background Green fields and Born updates | Sound speed | Full Green volume integral by config; optional Eikonal/WKB; not an upstream r-Wave port | `configs/algorithms/rwave.yaml` |
 | FWI / `fwi_wust` | WUST frequency-domain total-pressure inversion | Sound speed | CUDA production; CPU reference; schedule/time budgets, not online convergence | `configs/algorithms/fwi_wust.yaml` |
-| Tiny FWI / `fwi_tiny` | Small synthetic sanity model | Sound speed | Test helper, not production FWI | `configs/algorithms/fwi_tiny.yaml` |
 
 The production FWI contract is documented in [fwi.md](fwi.md). WUST owns per-TX/per-frequency source-scale elimination; Born retains its distinct source calibration.
 

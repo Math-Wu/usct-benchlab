@@ -209,4 +209,3 @@ result using the package-standard benchmark outputs.
 | Nonlinear Eikonal travel-time tomography | `bent_ray_gn` | `delta_tof_s` or `tof_s` | Sound speed |
 | Relinearized finite-frequency Ray-Born | `rwave_adapter` | `freq_data`, calibrated source/reference | Sound speed |
 | PDE-level full-wave inversion adapter | `fwi_wust` | Total complex pressure and approved WUST CUDA runtime | Sound speed |
-| Small waveform-inversion sanity model | `fwi_tiny` | Synthetic waveform case | Sound speed |

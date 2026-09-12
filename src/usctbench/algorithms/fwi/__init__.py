@@ -1,4 +1,4 @@
-"""Tiny waveform-inversion proof-of-life components."""
+"""Production WUST registration and directly importable test helpers."""
 
 from __future__ import annotations
 
@@ -11,14 +11,6 @@ from .tiny import TinyFWIAlgorithm
 def register_fwi_algorithms(*, replace: bool = False) -> None:
     from usctbench.core.algorithm_specs import SPECS
 
-    register_algorithm(
-        "fwi_tiny",
-        TinyFWIAlgorithm,
-        specification=SPECS["fwi_tiny"],
-        description="Tiny synthetic waveform-inversion proof-of-life.",
-        tags=("fwi", "synthetic", "sound-speed"),
-        replace=replace,
-    )
     register_algorithm(
         "fwi_wust",
         WUSTFWIAlgorithm,
