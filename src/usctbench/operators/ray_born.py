@@ -104,7 +104,7 @@ class RayBornForward:
             self.green_matvecs += operator.green_matvecs
         jacobian = operator
         if operator.green_device is not None:
-            from usctbench.operators.forward.cuda_green import CudaBornJacobian
+            from usctbench.operators.cuda_green import CudaBornJacobian
 
             jacobian = CudaBornJacobian(operator, operator.green_device)
         return Linearization(
@@ -313,7 +313,7 @@ class RayBornOperator:
         )
         green *= np.exp(self.log_amplitude_ratio + 2j * np.pi * frequency * self.delay)
         if self.green_method == "full_green_volume_integral":
-            from usctbench.operators.forward.volume_integral import VolumeIntegralGreen
+            from usctbench.operators.volume_integral import VolumeIntegralGreen
 
             solver = VolumeIntegralGreen(
                 self.grid,

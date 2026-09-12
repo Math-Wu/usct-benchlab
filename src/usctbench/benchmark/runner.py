@@ -376,10 +376,10 @@ def _write_straight_ray_diagnostics(
         return
     try:
         from usctbench.algorithms.ray import (
-            StraightRayProjector,
             ray_weights,
             valid_ray_mask,
         )
+        from usctbench.operators.straight_ray import StraightRayProjector
     except Exception:
         return
 

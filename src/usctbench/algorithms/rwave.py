@@ -15,7 +15,7 @@ from usctbench.data.calibration import fit_water_source
 from usctbench.core.registry import register_algorithm
 from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, USCTCase
 from usctbench.core.stopping import BudgetExhausted
-from usctbench.operators.forward.ray_born import RayBornForward, RayBornOperator
+from usctbench.operators.ray_born import RayBornForward, RayBornOperator
 from usctbench.solvers.least_squares import linear_cgls
 from usctbench.solvers.nonlinear import nonlinear_least_squares
 
@@ -151,6 +151,20 @@ class RWaveAdapter:
             ),
         )
         bounds = speed_bounds(config)
+        control.declare_update(
+            (
+                "delta_squared_slowness"
+                if mode == "fixed_background"
+                else "squared_slowness"
+            ),
+            "full_squared_slowness",
+            "s^2/m^2",
+            normalization=(
+                None
+                if mode == "fixed_background"
+                else "norm(q_new-q_old)/norm(q_old); positive bounded squared slowness"
+            ),
+        )
         green_settings["budget_check"] = control.work.check_time
         if (
             not np.all(np.isfinite(background))
@@ -311,7 +325,7 @@ class RWaveAdapter:
                 from types import SimpleNamespace
                 from scipy.ndimage import gaussian_filter
                 from usctbench.data.phase_delay import phase_slope_delays
-                from usctbench.operators.forward.straight_ray import (
+                from usctbench.operators.straight_ray import (
                     StraightRayProjector,
                 )
                 from usctbench.solvers.least_squares import normal_step

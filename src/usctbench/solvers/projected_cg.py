@@ -129,6 +129,8 @@ def projected_cg(
         return state, metrics
 
     try:
+        if huber_delta is not None:
+            control.monitor.set_stage("irls_0")
         prediction = control.call("forward", operator.forward, x).reshape(
             control.observed.shape
         )
@@ -140,6 +142,8 @@ def projected_cg(
         direction, gamma, previous_free = None, None, None
         stage_gamma = 0.0
         for iteration in range(1, control.policy.max_iterations + 1):
+            if huber_delta is not None:
+                control.monitor.set_stage(f"irls_{(iteration - 1) // block}")
             current_weights = precision(prediction)
             true_gradient = negative_gradient(current_weights)
             if not np.all(np.isfinite(true_gradient)):

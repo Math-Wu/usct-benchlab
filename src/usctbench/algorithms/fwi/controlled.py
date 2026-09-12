@@ -39,6 +39,12 @@ def run_controlled(case, config):
         iteration_unit="full-wave GN outer step",
     )
     source = p.get("discrete_source_spectrum")
+    control.declare_update(
+        "squared_slowness",
+        "full_squared_slowness",
+        "s^2/m^2",
+        normalization="norm(q_new-q_old)/norm(q_old); positive bounded squared slowness",
+    )
     if (
         source is None
         and case.measurement.water_reference is None

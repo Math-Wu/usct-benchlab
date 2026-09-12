@@ -7,8 +7,8 @@ from usctbench.algorithms.bent_ray import BentRayGNAdapter
 from usctbench.algorithms.rwave import RWaveAdapter
 from usctbench.core.schema import AlgorithmConfig, GroundTruthSpec, MeasurementSpec
 from usctbench.data.synthetic import make_sound_speed_case
-from usctbench.operators.forward.eikonal import EikonalForward
-from usctbench.operators.forward.ray_born import RayBornOperator
+from usctbench.operators.eikonal import EikonalForward
+from usctbench.operators.ray_born import RayBornOperator
 
 
 def small_case(physics):
@@ -61,6 +61,12 @@ def test_native_inversions_reduce_residual_and_need_no_truth(physics, algorithm)
     assert result.metrics["stopping"]["ground_truth_used_for_stopping"] is False
     assert "rmse" not in result.metrics
     assert result.metrics["stopping"]["work"]["adjoint_calls"] > 0
+    stop = result.metrics["stopping"]
+    assert stop["update_variable"] == (
+        "full_slowness" if physics == "bent" else "full_squared_slowness"
+    )
+    assert stop["update_units"] == ("s/m" if physics == "bent" else "s^2/m^2")
+    assert stop["resolved_policy"]["max_iterations"] == 5
 
 
 @pytest.mark.parametrize(

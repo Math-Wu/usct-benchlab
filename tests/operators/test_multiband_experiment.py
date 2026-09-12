@@ -280,7 +280,7 @@ def test_ring_exclusion_uses_parent_indices_and_preserves_legacy_mask():
 
 def test_near_channels_cannot_leak_into_finite_frequency_gradient():
     from usctbench.core.schema import GridSpec, GeometrySpec, USCTCase, MeasurementSpec
-    from usctbench.operators.forward.ray_born import RayBornOperator, RayBornForward
+    from usctbench.operators.ray_born import RayBornOperator, RayBornForward
     from usctbench.operators.forward.band_delay import FiniteFrequencyTravelTimeForward
 
     ids = np.arange(8)
@@ -388,7 +388,7 @@ def test_direct_observed_correlation_chain_and_channel_locality():
 
 def test_reduced_nonlinear_full_chain_and_checkpoint(tmp_path):
     from usctbench.core.schema import GridSpec, GeometrySpec, USCTCase, MeasurementSpec
-    from usctbench.operators.forward.ray_born import RayBornOperator, RayBornForward
+    from usctbench.operators.ray_born import RayBornOperator, RayBornForward
     from usctbench.operators.forward.band_delay import FiniteFrequencyTravelTimeForward
 
     module = load_experiment()

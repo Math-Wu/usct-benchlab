@@ -6,7 +6,7 @@ from usctbench.operators.forward.correlation_delay import (
     CorrelationDelayDerivative,
     CorrelationTravelTimeJacobian,
 )
-from usctbench.operators.forward.ray_born import RayBornOperator
+from usctbench.operators.ray_born import RayBornOperator
 
 
 def test_positive_delay_sign_and_quadratic_small_shift_error():

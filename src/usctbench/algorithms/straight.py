@@ -17,7 +17,7 @@ from usctbench.algorithms.ray import (
 )
 from usctbench.core.config import coerce_bool
 from usctbench.core.schema import ReconstructionResult
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.operators.model_space import (
     BilinearBasis,
     FineGridRegularizer,
@@ -75,6 +75,12 @@ def reconstruct(case, config, algorithm):
         solver_operator = ReducedLinearOperator(projector, basis)
         solver_kind = FineGridRegularizer(basis, kind)
     initial = np.zeros(model_shape)
+    control.declare_update(
+        "delta_slowness" if basis is None else "delta_slowness_coefficients",
+        "full_slowness" if basis is None else "full_slowness_coefficients",
+        "s/m",
+        scope="full_physical_grid" if basis is None else "full_coefficient_grid",
+    )
     s0 = np.full(model_shape, 1.0 / c0)
 
     def project(x):

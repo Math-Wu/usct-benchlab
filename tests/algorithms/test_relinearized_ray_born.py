@@ -8,7 +8,7 @@ from usctbench.core.io import read_case_hdf5, write_case_hdf5
 from usctbench.core.schema import AlgorithmConfig, GroundTruthSpec, MeasurementSpec
 from usctbench.data.synthetic import make_sound_speed_case
 from usctbench.operators import adjoint_error
-from usctbench.operators.forward.ray_born import RayBornForward
+from usctbench.operators.ray_born import RayBornForward
 
 
 def nonlinear_case():
@@ -157,7 +157,7 @@ def test_physical_laplacian_has_an_exact_transpose_on_anisotropic_grid():
 
 
 def test_phase_seed_and_pressure_updates_exclude_heldout_frequency():
-    from usctbench.operators.forward.ray_born import RayBornOperator
+    from usctbench.operators.ray_born import RayBornOperator
 
     case, _, _ = nonlinear_case()
     f = np.array([100e3, 150e3, 200e3, 250e3])

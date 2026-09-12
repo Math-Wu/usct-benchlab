@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 
 from usctbench.algorithms.ray import (
-    StraightRayProjector,
     configured_ray_weights,
     ray_weight_metrics,
     run_with_failure_capture,
@@ -14,6 +13,7 @@ from usctbench.algorithms.ray import (
 from usctbench.core.registry import register_algorithm
 from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, USCTCase
 from usctbench.metrics import compute_image_metrics
+from usctbench.operators.straight_ray import StraightRayProjector
 
 
 class AttenuationSIRTAlgorithm:
@@ -48,11 +48,17 @@ class AttenuationSIRTAlgorithm:
                 valid_mask=mask.reshape(projector.ray_shape),
                 iteration_unit="SIRT sweep",
             )
+            control.declare_update(
+                "legacy_attenuation",
+                "legacy_attenuation_state",
+                "legacy_Np/m_frequency_unspecified",
+                normalization="norm(q_new-q_old)/norm(q_old); zero denominator is undefined and cannot stop",
+            )
             attenuation, metrics = row_action(
                 projector,
                 control,
                 initial=np.zeros(case.grid.shape),
-                reference=np.ones(case.grid.shape),
+                reference=np.zeros(case.grid.shape),
                 project=lambda x: np.clip(x, 0.0, upper),
                 to_image=lambda x: x,
                 relaxation=relaxation,
@@ -67,7 +73,6 @@ class AttenuationSIRTAlgorithm:
                     "attenuation_input_is_surrogate": _is_surrogate_attenuation_case(
                         case
                     ),
-                    "update_reference_scale_np_per_m": 1.0,
                     **ray_weight_metrics(weights, mask, config),
                 }
             )

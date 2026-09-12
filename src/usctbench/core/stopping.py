@@ -168,6 +168,13 @@ class StopMonitor:
         self.best_state = None
         self.best_iteration = None
         self.last_state = None
+        self.stage_id = None
+
+    def set_stage(self, stage_id):
+        """Reset update patience at stage boundaries, never the global budget."""
+        if stage_id != self.stage_id:
+            self.small_update_count = 0
+            self.stage_id = stage_id
 
     def observe(
         self,
@@ -239,6 +246,7 @@ class StopMonitor:
                 "relative_residual": relative,
                 "objective": float(objective),
                 "relative_update": update_relative,
+                "stage_id": self.stage_id,
                 "validation_relative_residual": validation_relative,
                 "work": dict(self.work.counts),
             }
@@ -340,9 +348,19 @@ class StopMonitor:
             ),
             "selected_iteration": selected,
             "iteration_unit": self.iteration_unit,
+            "stage_id": self.stage_id,
+            "selected_stage_id": next(
+                (
+                    row["stage_id"]
+                    for row in self.history
+                    if row["iteration"] == selected
+                ),
+                None,
+            ),
             "elapsed_s": self.work.elapsed_s,
             "work": dict(self.work.counts),
             "policy": asdict(self.policy),
+            "resolved_policy": asdict(self.policy),
             "budget_scope": "operator_calls; time_checked_between_calls",
             "ground_truth_used_for_stopping": self.policy.target_rmse_mps is not None,
             "has_complete_checkpoint": self.last_state is not None,

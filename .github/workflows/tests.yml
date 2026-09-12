@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,6 +20,8 @@ jobs:
       - run: ruff check src tests scripts
       - run: python -m compileall src tests
       - run: pytest -q
+      - name: Numerical operator contracts
+        run: python scripts/verify_numerical_contracts.py
       - run: python -m usctbench.cli --help
       - run: python -m usctbench.cli list-algorithms
       - run: bash scripts/run_smoke.sh

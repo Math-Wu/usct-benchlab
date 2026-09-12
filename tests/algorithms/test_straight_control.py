@@ -13,7 +13,7 @@ from usctbench.core.schema import AlgorithmConfig, GroundTruthSpec
 from usctbench.data.synthetic import make_sound_speed_case
 from usctbench.evaluation.data import residual_statistics, make_data_split
 from usctbench.operators.base import adjoint_error
-from usctbench.operators.forward.straight_ray import (
+from usctbench.operators.straight_ray import (
     StraightRayProjector as ForwardProjector,
 )
 
@@ -88,6 +88,12 @@ def test_training_holdout_isolation_without_truth(algorithm):
         != second.metrics["evaluation"]["receiver"]["relative_residual"]
     )
     assert first.metrics["data_residual_reduction"] > 0
+    stop = first.metrics["stopping"]
+    assert stop["optimization_variable"] == "delta_slowness"
+    assert stop["update_variable"] == "full_slowness"
+    assert stop["update_units"] == "s/m"
+    assert stop["update_norm_scope"] == "full_physical_grid"
+    assert stop["resolved_policy"] == stop["policy"]
 
 
 @pytest.mark.parametrize("algorithm", ALGORITHMS)

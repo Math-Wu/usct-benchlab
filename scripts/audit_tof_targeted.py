@@ -9,8 +9,8 @@ from usctbench.core.io import read_case_hdf5, write_case_hdf5
 from usctbench.core.schema import GroundTruthSpec, MeasurementDomain
 from usctbench.cli import register_builtin_algorithms
 from usctbench.benchmark.runner import run_algorithm_case
-from usctbench.operators.forward.straight_ray import StraightRayProjector
-from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.operators.straight_ray import StraightRayProjector
+from usctbench.operators.eikonal import EikonalForward
 
 
 def main():

@@ -15,7 +15,7 @@ from usctbench.core.schema import (
     MeasurementSpec,
     USCTCase,
 )
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.solvers.projected_cg import projected_cg
 
 

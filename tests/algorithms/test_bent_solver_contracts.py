@@ -12,7 +12,7 @@ from usctbench.core.schema import (
     USCTCase,
 )
 from usctbench.operators.base import Linearization
-from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.operators.eikonal import EikonalForward
 from usctbench.operators.model_space import BilinearBasis
 from usctbench.solvers.least_squares import regularizer
 

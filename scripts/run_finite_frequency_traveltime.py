@@ -39,7 +39,7 @@ from usctbench.operators.forward.band_delay import (
     BandDelayLinearization,
     FiniteFrequencyTravelTimeForward,
 )
-from usctbench.operators.forward.ray_born import RayBornForward, RayBornOperator
+from usctbench.operators.ray_born import RayBornForward, RayBornOperator
 from usctbench.solvers.nonlinear import nonlinear_least_squares
 
 
@@ -373,7 +373,7 @@ def phase_initialization(case, measured, water, frequencies, distance, control, 
     from types import SimpleNamespace
     from scipy.ndimage import gaussian_filter
     from usctbench.data.phase_delay import phase_slope_delays
-    from usctbench.operators.forward.straight_ray import StraightRayProjector
+    from usctbench.operators.straight_ray import StraightRayProjector
     from usctbench.solvers.least_squares import normal_step
 
     # No frequency holdout is claimed: overlapping bands share the full spectrum.

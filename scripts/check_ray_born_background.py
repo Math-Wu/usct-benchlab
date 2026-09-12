@@ -19,7 +19,7 @@ from scipy.ndimage import gaussian_filter
 from usctbench.core.io import read_case_hdf5
 from usctbench.data.calibration import fit_water_source
 from usctbench.evaluation.data import residual_statistics
-from usctbench.operators.forward.ray_born import RayBornForward, RayBornOperator
+from usctbench.operators.ray_born import RayBornForward, RayBornOperator
 
 
 def check(case_path, out, green_backend="eikonal_wkb"):
@@ -123,8 +123,8 @@ def check(case_path, out, green_backend="eikonal_wkb"):
 
 
 def check_ray_observable(case_path, out):
-    from usctbench.operators.forward.eikonal import EikonalForward
-    from usctbench.operators.forward.straight_ray import StraightRayProjector
+    from usctbench.operators.eikonal import EikonalForward
+    from usctbench.operators.straight_ray import StraightRayProjector
 
     case = read_case_hdf5(case_path)
     truth = case.ground_truth.sound_speed_mps

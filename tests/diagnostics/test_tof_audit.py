@@ -14,7 +14,7 @@ from usctbench.core.schema import (
     MeasurementSpec,
     USCTCase,
 )
-from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.operators.eikonal import EikonalForward
 
 path = Path(__file__).resolve().parents[2] / "scripts/tof_audit_common.py"
 spec = importlib.util.spec_from_file_location("tof_audit_common", path)

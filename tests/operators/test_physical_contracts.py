@@ -1,6 +1,7 @@
 """Tests of the canonical physical pairs, including the numerical error trend."""
 
 import importlib.util
+import ast
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,50 @@ def test_legacy_imports_share_the_canonical_implementation():
         assert (
             module.__name__ == "usctbench.operators." + module.__name__.split(".")[-1]
         )
+    from usctbench.operators import cuda_green, volume_integral
+    from usctbench.operators.forward import cuda_green as old_cuda
+    from usctbench.operators.forward import volume_integral as old_volume
+
+    assert old_cuda.CudaBornJacobian is cuda_green.CudaBornJacobian
+    assert old_cuda.solve_fields is cuda_green.solve_fields
+    assert old_volume.VolumeIntegralGreen is volume_integral.VolumeIntegralGreen
+
+
+def test_production_imports_do_not_use_compatibility_physical_modules():
+    root = Path(__file__).parents[2]
+    names = {"straight_ray", "eikonal", "ray_born", "volume_integral", "cuda_green"}
+    for path in list((root / "src").rglob("*.py")) + list(
+        (root / "scripts").rglob("*.py")
+    ):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                if module == "usctbench.algorithms.ray":
+                    assert "StraightRayProjector" not in {
+                        a.name for a in node.names
+                    }, path
+                if module in {
+                    "usctbench.operators.forward",
+                    "usctbench.operators.adjoint",
+                }:
+                    assert not names.intersection(a.name for a in node.names), path
+                assert not any(
+                    module == f"usctbench.operators.{direction}.{name}"
+                    for direction in ("forward", "adjoint")
+                    for name in names
+                ), path
+            elif isinstance(node, ast.Import):
+                assert not any(
+                    a.name == f"usctbench.operators.{direction}.{name}"
+                    for a in node.names
+                    for direction in ("forward", "adjoint")
+                    for name in names
+                ), path
+    for name in names:
+        path = root / "src/usctbench/operators" / f"{name}.py"
+        assert "operators.forward" not in path.read_text()
+        assert "operators.adjoint" not in path.read_text()
 
 
 @pytest.mark.parametrize("backend", ["reference", "csr"])

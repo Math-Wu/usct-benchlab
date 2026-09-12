@@ -17,7 +17,7 @@ from usctbench.core.config import coerce_bool
 from usctbench.core.registry import register_algorithm
 from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, USCTCase
 from usctbench.core.stopping import BudgetExhausted
-from usctbench.operators.forward.eikonal import EikonalForward
+from usctbench.operators.eikonal import EikonalForward
 from usctbench.operators.model_space import (
     BilinearBasis,
     FineGridRegularizer,
@@ -80,6 +80,16 @@ class BentRayGNAdapter:
             weights=weights,
             valid_mask=valid,
             iteration_unit="Gauss-Newton outer step",
+        )
+        control.declare_update(
+            (
+                "slowness"
+                if p.get("model_grid_shape") is None
+                else "delta_slowness_coefficients"
+            ),
+            "full_slowness",
+            "s/m",
+            normalization="norm(q_new-q_old)/norm(q_old); positive bounded slowness",
         )
         inner = int(p.get("inner_iterations", 16))
         if inner < 1:
@@ -187,7 +197,7 @@ class BentRayGNAdapter:
 
         try:
             if initialization == "cgls":
-                from usctbench.operators.forward.straight_ray import (
+                from usctbench.operators.straight_ray import (
                     StraightRayProjector,
                 )
 

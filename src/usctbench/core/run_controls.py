@@ -42,7 +42,7 @@ class RunControls(BaseModel):
     )
     update_rtol: NonnegativeFloat | None = Field(
         default=None,
-        description="Relative change in the documented model variable. Opt-in: no universal tolerance is assumed across parameterizations.",
+        description="Opt-in relative change; stopping metadata declares optimization/update variables, units, norm scope and normalization. No universal tolerance is assumed.",
     )
     update_patience: Annotated[int, Field(strict=True, ge=1)] = Field(
         default=2,

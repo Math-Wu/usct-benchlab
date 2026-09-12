@@ -24,8 +24,8 @@ from usctbench.data.validation_acquisition import (
 )
 from usctbench.data.waveforms import _read_channels
 from usctbench.evaluation.arrival_consistency import translated_reference_residual
-from usctbench.operators.forward.eikonal import EikonalForward, fast_march
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.eikonal import EikonalForward, fast_march
+from usctbench.operators.straight_ray import StraightRayProjector
 
 
 def stats(values):

@@ -16,8 +16,8 @@ from scipy.optimize import minimize_scalar
 from usctbench.core.io import read_case_hdf5
 from usctbench.core.schema import GeometrySpec, GridSpec
 from usctbench.data.waveforms import pressure_spectrum
-from usctbench.operators.forward.eikonal import EikonalForward, fast_march
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.eikonal import EikonalForward, fast_march
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.operators.model_space import BilinearBasis, ReducedLinearOperator
 
 

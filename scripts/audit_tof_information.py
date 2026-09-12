@@ -9,7 +9,7 @@ import numpy as np
 from scipy import sparse, linalg
 from scipy.sparse.linalg import spsolve, lsmr
 from usctbench.core.io import read_case_hdf5, read_result_hdf5
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.operators.model_space import BilinearBasis
 from usctbench.metrics import compute_regional_image_metrics
 

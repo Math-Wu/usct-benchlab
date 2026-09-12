@@ -16,7 +16,7 @@ from usctbench.core.schema import (
 )
 
 # Historical imports remain valid after separating physics and numerical solvers.
-from usctbench.operators.forward.straight_ray import StraightRayProjector
+from usctbench.operators.straight_ray import StraightRayProjector
 from usctbench.solvers.algebraic import (  # noqa: F401
     apply_mask,
     masked_norm,
