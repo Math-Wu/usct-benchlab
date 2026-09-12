@@ -1,0 +1,15 @@
+name: fwi_wust
+run_controls:
+  max_iterations: null
+  max_elapsed_s: 3600
+parameters:
+  initialization: reference
+  sound_speed_bounds_mps: [1300.0, 1800.0]
+  pml_m: 0.003
+  max_update_mps: 12.0
+  step_damping: 0.25
+  source_batch_size: 3
+  frequency_schedule_hz: null
+metadata:
+  purpose: explicit_demo_profile_not_calibrated_preset
+  note: Adjust physical bounds and PML for the supplied computational grid; GPU is required.

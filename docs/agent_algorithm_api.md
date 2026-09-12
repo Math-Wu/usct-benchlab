@@ -12,8 +12,7 @@ usct list-algorithms --json
 usct describe-algorithm straight_cgls --json
 usct describe-algorithm bent_ray_gn --json
 usct describe-algorithm rwave_adapter --variant full_green_nonlinear --json
-usct describe-algorithm fwi_kwave_adapter --variant controlled --json
-usct describe-algorithm fwi_kwave_adapter --variant external_pipeline --json
+usct describe-algorithm fwi_wust --json
 ```
 
 Stdout is a single JSON value. Errors go to stderr and return a nonzero status.
@@ -31,15 +30,7 @@ The schema version is `usct.algorithm.v1`. An entry supplies:
 This does not claim an upstream r-Wave reproduction. WKB sensitivity is not
 the exact derivative of the discretized WKB prediction.
 
-FWI variants are `import_result` (the historical default), `external_pipeline`,
-and `controlled`. Import does not reconstruct and exposes no autonomous
-hyperparameters. External pipeline configuration does not imply availability or
-online stopping support. Controlled FWI has a separate parameter model and
-discrete pressure/source requirements.
-
-The existing diffusion adapter is listed with `typed_interface_available=false`:
-it remains expert-only and cannot be admitted through this Agent API. Neither
-that integration nor `inverse_problem_agent` was modified in these rounds.
+`fwi_wust` has one production variant, family `full_wave`. It requires existing total complex pressure, explicit axes/Fourier semantics and validity mask. WUST eliminates complex source scale per TX/frequency; it does not require Born source calibration. Runtime root, MATLAB executable, CUDA device and CPU reference selection are never Agent parameters. Deployment must separately verify GPU production availability.
 
 ## Enforced admission
 
@@ -92,12 +83,7 @@ test data. No MATLAB process is started by discovery.
 
 ## Compatibility and limits
 
-Legacy YAML stopping behavior is preserved; new Agent admission uses RunControls
-with no default update tolerance. Budgets cap work but do not promise equal FLOPs
-or equal reconstruction quality across models. External deadlines remain the
-supervisor's responsibility. Do not send online budget requests to variants that
-declare them unsupported, or reinterpret imported results as budget-controlled
-reconstructions.
+Native legacy YAML stopping behavior remains available. New Agent admission uses RunControls with no default update tolerance. WUST supports only schedule truncation and a shared hard elapsed-time deadline, not numerical convergence. CPU availability must not be used as a production certificate.
 
 Schema generation prunes hidden properties and unreachable `$defs`. Nested
 object-valued Agent parameters currently fail schema generation until an explicit
@@ -108,6 +94,4 @@ versions rather than reconstructing a second parameter table.
 ## Reconstruction scope
 
 The canonical reconstruction target is 2-D sound speed. Attenuation is not an
-estimated quantity or Agent capability. External FWI descriptions distinguish
-artifact import from execution; an imported image does not certify zero-absorption
-physics in its originating runtime. Compute budgets and trust boundaries are unchanged.
+estimated quantity or Agent capability. Production WUST performs reconstruction through its versioned runtime rather than importing historical images.

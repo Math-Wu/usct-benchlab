@@ -72,11 +72,9 @@ implementation: five of eight earlier coarse-grid inversions failed to find a
 descent step. The high-resolution background-error check and reconstruction
 results are separated in the validation record, not combined into one ranking.
 
-The optional full-wave bridge exports the actual external WaveformInversionUST
-Helmholtz matrix, with a separate real-model complex adjoint. Finite differences
-and one controlled truth-free update have been tested on A100/MATLAB. This does
-not certify the production driver's complete optimization trajectory; that
-driver and its gradient choices are preserved.
+Production `fwi_wust` calls the maintained WUST runtime directly. The previous
+matrix-export reference bridge is removed. See [FWI deployment](fwi.md) for
+the separate hardware-free, CPU-reference and real CUDA acceptance gates.
 
 ## Research basis
 
@@ -91,6 +89,6 @@ driver and its gradient choices are preserved.
   arXiv:2511.18511, especially sections 3.1-3.5.
 - Upstream r-Wave: https://github.com/Ash1362/ray-based-quantitative-ultrasound-tomography
 - Production FWI upstream: https://github.com/rehmanali1994/WaveformInversionUST
-  (`fwi_kwave_adapter`); `fwi_tiny` is only a plumbing/sanity test.
+  (`fwi_wust` uses the maintained runtime); `fwi_tiny` is only a plumbing/sanity test.
 
 No upstream MATLAB source has been copied into this MIT-licensed package.

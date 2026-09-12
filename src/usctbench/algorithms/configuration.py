@@ -26,7 +26,7 @@ from usctbench.algorithms.parameters import (
     TinyFWIParameters,
     parameter,
 )
-from usctbench.core.config import coerce_bool, expand_config_value
+from usctbench.core.config import expand_config_value
 from usctbench.core.schema import AlgorithmConfig, ReconstructionResult, ResultStatus
 from usctbench.core.stopping import StopPolicy
 
@@ -53,23 +53,14 @@ def default_iterations(name, parameters=None):
     p = parameters or {}
     if name == "rwave_adapter":
         return 30 if p.get("mode") == "fixed_background" else 4
-    if name == "fwi_kwave_adapter":
-        return 5 if coerce_bool(p.get("controlled_operator", False)) else None
     return DEFAULT_ITERATIONS.get(name)
 
 
 def parameter_model(name, parameters=None):
-    from usctbench.algorithms.fwi.parameters import (
-        ControlledFWIParameters,
-        ExternalFWIParameters,
-    )
+    if name == "fwi_wust":
+        from usctbench.algorithms.fwi.parameters import WUSTParameters
 
-    if name == "fwi_kwave_adapter":
-        return (
-            ControlledFWIParameters
-            if coerce_bool((parameters or {}).get("controlled_operator", False))
-            else ExternalFWIParameters
-        )
+        return WUSTParameters
     if name == "rwave_adapter" and (parameters or {}).get("mode") == "fixed_background":
         return FixedBornParameters
     if name not in PARAMETER_MODELS:
@@ -115,14 +106,13 @@ class LegacyIterations(Parameters):
 
 def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
     """Raise on invalid input; return an independent, resolved compatibility object."""
-    from usctbench.algorithms.fwi.parameters import (
-        ControlledFWIParameters,
-        ExternalFWIParameters,
-    )
-
     if config.name is not None and config.name != name:
         raise ValueError(f"algorithm/config mismatch: {name!r} != {config.name!r}")
     values = expand_config_value(dict(config.parameters))
+    if name == "fwi_wust":
+        from usctbench.algorithms.fwi.algorithm import validate_config
+
+        return validate_config(config, values)
     model = parameter_model(name, values)
     # Canonicalize the whole-solve alias before any legacy or typed budget checks.
     if model is FixedBornParameters and "inner_iterations" in values:
@@ -143,14 +133,10 @@ def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
     }
     LegacyIterations.model_validate(budget_keys)
     valid_budget_keys = {"iterations"}
-    if (
-        name in {"bent_ray_gn", "rwave_adapter"} and model is not FixedBornParameters
-    ) or model is ControlledFWIParameters:
+    if name in {"bent_ray_gn", "rwave_adapter"} and model is not FixedBornParameters:
         valid_budget_keys.add("outer_iterations")
     if name == "fwi_tiny":
         valid_budget_keys = {"steps"}
-    if model is ExternalFWIParameters:
-        valid_budget_keys = set()
     if budget_keys.keys() - valid_budget_keys:
         raise ValueError(
             f"unused iteration controls for {name}: {sorted(budget_keys.keys() - valid_budget_keys)}"
@@ -191,10 +177,7 @@ def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
         if not isinstance(path, str):
             raise ValueError("_run_output_dir must be a deployment-owned string")
         auxiliary["_run_output_dir"] = path
-    for key, allowed in (
-        ("source_spectrum", name == "rwave_adapter"),
-        ("discrete_source_spectrum", model is ControlledFWIParameters),
-    ):
+    for key, allowed in (("source_spectrum", name == "rwave_adapter"),):
         if key in values and allowed:
             array = np.asarray(values.pop(key), dtype=complex)
             if array.ndim not in (0, 1, 2) or not np.isfinite(array).all():
@@ -207,12 +190,6 @@ def validate_algorithm_config(name, config: AlgorithmConfig) -> AlgorithmConfig:
             values[key] = values[key].tolist()
     typed = model.model_validate(values)
     backend = typed.backend_parameters()
-    if model is ExternalFWIParameters and (
-        config.run_controls is not None or config.budget_caps is not None
-    ):
-        raise ValueError(
-            "external FWI cannot enforce run_controls/budget_caps; use controlled_operator or a deployment-level supervisor"
-        )
     if name == "fwi_tiny" and (
         config.run_controls is not None or config.budget_caps is not None
     ):

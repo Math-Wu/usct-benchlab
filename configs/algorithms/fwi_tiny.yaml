@@ -1,7 +1,0 @@
-name: fwi_tiny
-parameters:
-  frequencies_hz: [100000.0, 150000.0, 200000.0]
-  initial_sound_speed_mps: 1500.0
-  steps: 20
-  learning_rate: 1000000.0
-  sound_speed_bounds_mps: [1300.0, 1700.0]

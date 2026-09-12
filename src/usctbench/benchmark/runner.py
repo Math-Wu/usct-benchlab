@@ -84,7 +84,7 @@ def load_algorithm_config(path: str | Path) -> AlgorithmConfig:
         run_controls=payload.get("run_controls"),
         budget_caps=payload.get("budget_caps"),
     )
-    if config.name and config.name != "diffusion_fwi_kwave_adapter":
+    if config.name:
         return validate_algorithm_config(config.name, config)
     return config
 

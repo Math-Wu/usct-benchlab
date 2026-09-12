@@ -79,7 +79,7 @@ class AlgorithmSpecification:
         v = self.variant(variant_id)
         model = parameter_model(self.algorithm_id, v.selectors)
         schema, defaults = agent_schema(model, v.selectors, enabled=v.agent_parameters)
-        return {
+        description = {
             "schema_version": "usct.algorithm.v1",
             "algorithm_id": self.algorithm_id,
             "family": self.family,
@@ -127,6 +127,27 @@ class AlgorithmSpecification:
             "iteration_unit": v.iteration_unit,
             "deterministic_status": v.deterministic,
         }
+        if self.algorithm_id == "fwi_wust":
+            for key in ("run_controls_schema", "budget_caps_schema"):
+                properties = description["compute_budget"][key]["properties"]
+                for unsupported in ("max_forward_calls", "max_adjoint_calls"):
+                    properties.pop(unsupported, None)
+            description["compute_budget"][
+                "deadline_semantics"
+            ] = "hard global deadline including admission, ingestion, reconstruction and parsing"
+            description["compute_budget"][
+                "numerical_convergence_stopping_supported"
+            ] = False
+            controls = description["compute_budget"]["run_controls_schema"][
+                "properties"
+            ]
+            controls["max_iterations"][
+                "description"
+            ] = "Truncate the resolved frequency schedule; null runs the full schedule, zero returns validated initialization."
+            controls["max_elapsed_s"][
+                "description"
+            ] = "One hard global deadline in seconds; an explicit request or deployment timeout cap is required."
+        return description
 
 
 def agent_schema(model, selectors=None, *, enabled=True):
@@ -165,6 +186,7 @@ def agent_schema(model, selectors=None, *, enabled=True):
 
     for key, value in properties.items():
         inspect(value)
+        value.update(getattr(model, "agent_schema_overrides", {}).get(key, {}))
         value["default"] = defaults[key]
         if key in (selectors or {}):
             value["const"] = selectors[key]
@@ -285,86 +307,33 @@ SPECS = {
             )
         ),
     ),
-    "fwi_kwave_adapter": AlgorithmSpecification(
-        "fwi_kwave_adapter",
+    "fwi_wust": AlgorithmSpecification(
+        "fwi_wust",
         "full_wave",
-        "2-D sound-speed FWI result/pipeline boundary and controlled discrete reference; attenuation is not estimated.",
+        "2-D frequency-domain sound-speed FWI through the pinned WUST CUDA runtime; no attenuation reconstruction.",
         (
             Variant(
-                "import_result",
-                "external_result_import_no_optimization",
-                selectors={"controlled_operator": False, "run_external": False},
-                observation_domains=(),
-                required_observations=(),
-                runtime_requirements=("h5py", "existing_compatible_result_artifact"),
-                limitations=(
-                    "Import is not a new FWI run; external iteration/stop provenance may be unavailable.",
-                ),
-                iteration_unit="not_applicable_result_import",
-                deterministic="deterministic_artifact_import",
-                online_controls=False,
-                agent_parameters=False,
-            ),
-            Variant(
-                "external_pipeline",
-                "external_full_wave_inversion",
-                selectors={"controlled_operator": False, "run_external": True},
-                observation_domains=("external_time_waveform_artifact",),
-                required_observations=(),
-                runtime_requirements=(
-                    "deployment_approved_fwi_pipeline",
-                    "MATLAB",
-                    "k-Wave_if_generation_requested",
-                ),
-                limitations=(
-                    "Numerical defaults and supported flags depend on the deployed external runtime.",
-                    "Per-process timeout is not a global multi-stage deadline.",
-                ),
-                iteration_unit="external_frequency_stage_iteration",
-                deterministic="external_runtime_dependent",
-                online_controls=False,
-            ),
-            Variant(
-                "controlled",
-                "discrete_frequency_helmholtz_gauss_newton",
-                selectors={"controlled_operator": True},
+                "wust",
+                "source_projected_Helmholtz_frequency_continuation_NCG",
                 observation_domains=("frequency",),
-                required_observations=("freq_data", "frequencies_hz"),
-                observation_alternatives=(
-                    ("water_reference",),
-                    ("discrete_source_spectrum",),
+                required_observations=(
+                    "freq_data",
+                    "frequencies_hz",
+                    "valid_mask",
+                    "declared_pressure_convention",
                 ),
                 runtime_requirements=(
                     "MATLAB",
-                    "compatible_WaveformInversionUST_functions",
+                    "approved_pinned_WUST_CUDA_Block_LU",
                 ),
                 limitations=(
-                    "Controlled reference trajectory, not the production CUDA FWI trajectory.",
-                    "Discrete source calibration differs from analytic Born source factors.",
+                    "GPU is production; CPU is reference/debug only. No CPU fallback.",
+                    "Schedule completion is not convergence; no final-model residual evaluation.",
+                    "Only iteration and global elapsed-time budgets are supported.",
+                    "Scalar/reference initialization available to Agent; map is expert-only.",
                 ),
-                iteration_unit="full-wave GN outer step",
+                iteration_unit="frequency_schedule_update",
                 deterministic="fixed_runtime_and_linear_solver_environment",
-            ),
-        ),
-        supported_geometries=("ring",),
-    ),
-    "fwi_tiny": AlgorithmSpecification(
-        "fwi_tiny",
-        "synthetic_waveform_sanity",
-        "Small internally synthesized waveform proof-of-life.",
-        (
-            Variant(
-                "tiny_synthetic",
-                "central_path_waveform_sanity",
-                observation_domains=("property_map",),
-                required_observations=("ground_truth.sound_speed_mps",),
-                iteration_unit="gradient_step",
-                runtime_requirements=("numpy",),
-                limitations=(
-                    "Generates observations from GT internally; not an independent measurement benchmark.",
-                    "Only legacy steps are supported, not generic online stopping.",
-                ),
-                online_controls=False,
             ),
         ),
     ),
@@ -389,6 +358,10 @@ def make_agent_config(
     selected = spec.variant(variant)
     description = spec.describe(selected.id)
     supplied = dict(parameters or {})
+    if algorithm_id == "fwi_wust" and supplied.get("initialization") == "map":
+        raise ValueError(
+            "Map initialization is expert-only; no Agent artifact resolver exists yet"
+        )
     forbidden = supplied.keys() - set(description["allowed_parameters"])
     if forbidden:
         raise ValueError(f"parameters not exposed to Agent: {sorted(forbidden)}")
@@ -460,7 +433,21 @@ def case_capabilities(
     frequencies = measurement.frequencies_hz
     controls = None
     policy = None
-    if selected.online_controls:
+    if algorithm_id == "fwi_wust":
+        schedule = resolved.parameters.get("frequency_schedule_hz")
+        count = len(
+            ([] if frequencies is None else frequencies)
+            if schedule is None
+            else schedule
+        )
+        policy = (
+            (resolved.run_controls or RunControls())
+            .capped(resolved.budget_caps, default_iterations=count)
+            .model_dump()
+        )
+        policy["max_iterations"] = min(count, policy["max_iterations"])
+        controls = {key: policy[key] for key in BUDGET_FIELDS}
+    elif selected.online_controls:
         policy = (
             (resolved.run_controls or RunControls()).to_stop_policy(
                 default_iterations=resolved.parameters["iterations"],
@@ -485,6 +472,9 @@ def case_capabilities(
             "meaning": "presence only; operator-specific units/convention checks still required",
         },
         "runtime_available": runtime_available,
+        "production_runtime_available": (
+            None if algorithm_id == "fwi_wust" else runtime_available
+        ),
         "runtime_availability_source": (
             "not_checked" if runtime_available is None else "deployment_reported"
         ),

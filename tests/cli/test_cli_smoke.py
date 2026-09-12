@@ -15,5 +15,7 @@ def test_cli_help_and_algorithm_list(capsys):
     output = capsys.readouterr().out
     assert "USCT benchmark command-line interface" in output
     assert "straight_cgls" in output
-    assert "fwi_kwave_adapter" in output
-    assert "diffusion_fwi_kwave_adapter" in output
+    assert "fwi_wust" in output
+    assert "fwi_tiny" not in output
+    assert "fwi_kwave_adapter" not in output
+    assert "diffusion_fwi_kwave_adapter" not in output
